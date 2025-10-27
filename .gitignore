@@ -1,0 +1,6 @@
+# ignore .csv and .txt files
+*.csv
+*.txt
+
+# ignore .log files
+*.log
