@@ -11,3 +11,6 @@
 *.zip
 *.tar.gz
 *.rar
+
+# ignore Python TRR_model.py file
+TRR_model.py
