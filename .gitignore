@@ -14,3 +14,12 @@
 
 # ignore Python TRR_model.py file
 TRR_model.py
+
+# ignore .json files
+*.json
+
+# ignore .safetensors files
+*.safetensors
+
+# ignore .model files
+*.model
