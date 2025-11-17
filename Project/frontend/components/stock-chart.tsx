@@ -211,7 +211,7 @@ export default function StockChart({ stock }: StockChartProps) {
     if (active && payload && payload[0]) {
       const data = payload[0].payload
       if (data.isFuture) return null
-      
+
       return (
         <div className="p-3 space-y-1 text-sm bg-card/90 border border-border rounded-lg backdrop-blur">
           <p className="text-muted-foreground text-xs font-medium">{data.time}</p>
@@ -238,9 +238,8 @@ export default function StockChart({ stock }: StockChartProps) {
               <div className="text-right">
                 <div className="text-3xl font-bold">{currentPrice.toFixed(2)}đ</div>
                 <div
-                  className={`animate-pulse text-sm font-semibold transition-all duration-300 ${
-                    priceChange > 0 ? 'text-green-500' : 'text-red-500'
-                  }`}
+                  className={`animate-pulse text-sm font-semibold transition-all duration-300 ${priceChange > 0 ? 'text-green-500' : 'text-red-500'
+                    }`}
                 >
                   {priceChange > 0 ? '+' : ''}{priceChangePercent}%
                 </div>
@@ -248,21 +247,19 @@ export default function StockChart({ stock }: StockChartProps) {
               <div className="flex gap-2">
                 <button
                   onClick={() => setChartType('line')}
-                  className={`px-3 py-1 rounded-md text-sm font-medium transition-all ${
-                    chartType === 'line'
-                      ? 'bg-primary text-white'
-                      : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                  }`}
+                  className={`px-3 py-1 rounded-md text-sm font-medium transition-all ${chartType === 'line'
+                    ? 'bg-primary text-white'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                    }`}
                 >
                   Line
                 </button>
                 <button
                   onClick={() => setChartType('candle')}
-                  className={`px-3 py-1 rounded-md text-sm font-medium transition-all ${
-                    chartType === 'candle'
-                      ? 'bg-primary text-white'
-                      : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                  }`}
+                  className={`px-3 py-1 rounded-md text-sm font-medium transition-all ${chartType === 'candle'
+                    ? 'bg-primary text-white'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                    }`}
                 >
                   Candle
                 </button>
@@ -273,10 +270,16 @@ export default function StockChart({ stock }: StockChartProps) {
         <CardContent>
           <ResponsiveContainer width="100%" height={400}>
             {chartType === 'line' ? (
-              <LineChart data={candleData}>
+              <LineChart data={candleData} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                 <XAxis dataKey="time" stroke="var(--color-muted-foreground)" tick={false} />
-                <YAxis stroke="var(--color-muted-foreground)" domain={[priceRange.min, priceRange.max]} />
+                <YAxis
+                  stroke="var(--color-muted-foreground)"
+                  domain={[priceRange.min, priceRange.max]}
+                  tickCount={8}
+                  width={60}
+                  tickFormatter={(value) => `${value.toFixed(0)}`}
+                />
                 <Tooltip
                   contentStyle={{
                     backgroundColor: 'var(--color-card)',
@@ -314,7 +317,13 @@ export default function StockChart({ stock }: StockChartProps) {
               <ComposedChart data={candleData} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                 <XAxis dataKey="time" stroke="var(--color-muted-foreground)" tick={false} />
-                <YAxis stroke="var(--color-muted-foreground)" domain={[priceRange.min, priceRange.max]} />
+                <YAxis
+                  stroke="var(--color-muted-foreground)"
+                  domain={[priceRange.min, priceRange.max]}
+                  tickCount={8}
+                  width={60}
+                  tickFormatter={(value) => `${(value + 25).toFixed(0)}`}
+                />
                 <Tooltip content={<CandleTooltip />} />
                 <ReferenceDot x={36} r={0} stroke="var(--color-border)" strokeDasharray="5 5" />
                 <Bar dataKey="open" shape={<CustomCandleStick />} />
