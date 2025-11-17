@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-processed_news_collection = db['processed_news']
+processed_news_collection = db['news']
 summarized_news_collection = db['summarized_news']
 
 # Place Holder for summarization function
@@ -26,7 +26,7 @@ def summarize_text(text):
     if not text:
         return ""
     
-    return text[:200] + "..." if len(text) > 200 else text
+    return text
 
 def run_summarization(batch_size=100):
     # Get postID of documents that are already summarized
@@ -44,7 +44,9 @@ def run_summarization(batch_size=100):
     count = 0
     for news in cursor:
         postID = news.get("postID")
-        content = news.get("content", "")
+        content = news.get("title", "")
+        content += "\n" + news.get("description", "")
+        
         date = news.get('date', None)
         
         summary = summarize_text(content)

@@ -23,3 +23,10 @@ TRR_model.py
 
 # ignore .model files
 *.model
+
+# ignore .pkl files
+*.pkl
+
+# ignore .cpython files
+*.cpython-*.pyc
+*.pyc

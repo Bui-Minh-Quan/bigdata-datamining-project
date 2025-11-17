@@ -165,6 +165,7 @@ def preprocess_news_df(df: pd.DataFrame):
             "postID": row["postID"],
             "date": str(pd.to_datetime(row["date"])),
             "title": row.get("title"),
+            "description": row.get("description"),
             "originalContent": row.get("originalContent"),
             "sentiment": row.get("sentiment"),
             "totalLikes": row.get("totalLikes", 0),
