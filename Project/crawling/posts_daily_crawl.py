@@ -5,7 +5,7 @@ import random
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
-from data_preprocessing import preprocess_posts_df
+from .data_preprocessing import preprocess_posts_df
 
 
 import requests
@@ -244,7 +244,7 @@ def save_posts_csv(processed: List[Dict], target_day: datetime.date = TARGET_DAY
 # =========================
 # Main
 # =========================
-def main(target_day: Optional[datetime.date] = None):
+def main_posts_crawling(target_day: Optional[datetime.date] = None):
     if target_day is None: 
         target_day = TARGET_DAY 
     
@@ -269,4 +269,4 @@ def main(target_day: Optional[datetime.date] = None):
         logger.warning("No posts processed for saving.")
 
 if __name__ == "__main__":
-    main()
+    main_posts_crawling()

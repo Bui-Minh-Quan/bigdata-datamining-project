@@ -101,6 +101,9 @@ def brainstorm_with_llm(summary: str) -> List[Tuple[str, str, str]]:
     triples.append(("Trung Quốc", "taxes", "Mỹ"))
     triples.append(("Mỹ", "taxes", "Liên minh châu Âu"))
     triples.append(("Liên minh châu Âu", "impacts", "Thị trường tài chính"))
+    triples.append(("Giá cả tiêu dùng", "impacts", "cổ phiếu VNM"))
+    triples.append(("Lạm phát", "impacts", "cổ phiếu VNM"))
+    triples.append(("Giá cả tiêu dùng", "impacts", "cổ phiếu HAG"))
     
     
     return triples 
@@ -453,9 +456,7 @@ def build_phase_A_pipeline(limit_docs: Optional[int] = None,
     # 5) Prepare relational tuples for Phase B
     tuples = graph_to_relational_tuples(G_trr)
     
-    # 6) Save to Neo4j
-    if save_to_neo4j:
-        save_trr_to_neo4j(G_trr)
+
     
     return G_trr, tuples 
 

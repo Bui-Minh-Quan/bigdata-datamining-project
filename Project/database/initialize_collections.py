@@ -24,6 +24,11 @@ def init_collections():
     # ----- SUMMARIZED NEWS -----
     summarized = db["summarized_news"]
     summarized.create_index([("postID", ASCENDING)], unique=True)
+    
+    # ---- stock price data -----
+    stock_price_data = db["stock_price_data"]
+    stock_price_data.create_index([("symbol", ASCENDING), ("time", ASCENDING)], unique=True)
+    
 
     print("All collections initialized successfully with indexes.")
 
