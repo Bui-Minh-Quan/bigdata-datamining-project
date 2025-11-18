@@ -64,5 +64,5 @@ def run_pipeline(symbols, run_date: date):
 
 if __name__ == "__main__":
     # Example stock symbols to run reasoning on
-    stock_symbols = ['HCM', 'FPT' "VNM", "VCB", 'FPT']
+    stock_symbols = ['FPT', 'SSI', 'VCB', 'VHM', 'HPG', 'GAS', 'MSN', 'MWG', 'GVR', 'VIC']
     run_pipeline(stock_symbols, None)
