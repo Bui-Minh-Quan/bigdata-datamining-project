@@ -4,7 +4,7 @@ import sys
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(ROOT_DIR)
 
-from datetime import datetime, date 
+from datetime import datetime, date, timedelta
 from dateutil import parser as date_parser 
 from typing import List, Tuple, Dict, Optional 
 import math 
@@ -19,6 +19,7 @@ import random
 from database.db import get_database
 
 
+
 # -----------------------------
 # Configuration 
 # -----------------------------
@@ -26,8 +27,8 @@ NEO4J_URI = "bolt://localhost:7687"
 NEO4J_AUTH = ("neo4j", "password123")
 
 DECAY_LAMBDA_PER_DAY = 1
-TOP_Q = 10
-MEMORY_LOOKUP_WINDOW_DAYS = 365 * 5 
+TOP_Q = 6
+MEMORY_LOOKUP_WINDOW_DAYS = 365 
 
 # Logging 
 logging.basicConfig(level=logging.INFO)
@@ -46,8 +47,8 @@ def parse_date(d: Optional[str]) -> date:
     try:
         return date_parser.parse(d).date()
     except Exception:
-        logger.warning("Could not parse date %r, using today", d)
-        return datetime.utcnow().date()
+        # return today - 5 days
+        return (datetime.utcnow() - timedelta(days=2)).date()
     
 def retention_factor(event_date: date, ref_date: Optional[date] = None, decay_lambda: float = DECAY_LAMBDA_PER_DAY) -> float:
     """
@@ -101,6 +102,9 @@ def brainstorm_with_llm(summary: str) -> List[Tuple[str, str, str]]:
     triples.append(("Trung Quốc", "taxes", "Mỹ"))
     triples.append(("Mỹ", "taxes", "Liên minh châu Âu"))
     triples.append(("Liên minh châu Âu", "impacts", "Thị trường tài chính"))
+    triples.append(("Giá cả tiêu dùng", "impacts", "cổ phiếu VNM"))
+    triples.append(("Lạm phát", "impacts", "cổ phiếu VNM"))
+    triples.append(("Giá cả tiêu dùng", "impacts", "cổ phiếu HAG"))
     
     
     return triples 
@@ -272,17 +276,10 @@ def merge_memory_into_graph(G_daily:nx.MultiDiGraph, G_hist: nx.MultiDiGraph,
     return G
 
 
-def compute_weighted_pagerank_and_extract_trr(G_temporal: nx.MultiDiGraph, top_q:int = TOP_Q) -> Tuple[nx.DiGraph, List[str]]:
-    """
-    Compute PageRank on an aggregated DiGraph where multi-edges are collapsed by summing weights.
-    Then select top_q nodes, and extract the subgraph (connected components containing top nodes).
 
-    Returns:
-        G_trr (nx.DiGraph) - subgraph focused on top entities (no multi-edges).
-        top_nodes (List[str]) - list of top node names by pagerank.
-    """
-    
-    # build aggregated DiGraph with Weight = sum of edge weights (decayed)
+
+def compute_weighted_pagerank_and_extract_trr(G_temporal: nx.MultiDiGraph, top_q: int) -> Tuple[nx.DiGraph, List[str]]:
+    # Aggregate multi-edges into single edges with summed weights
     agg = nx.DiGraph()
     for u, v, data in G_temporal.edges(data=True):
         w = data.get("weight", 1.0)
@@ -290,59 +287,63 @@ def compute_weighted_pagerank_and_extract_trr(G_temporal: nx.MultiDiGraph, top_q
             agg[u][v]['weight'] += w
         else:
             agg.add_edge(u, v, weight=w)
-        
-    # Ensure isolated nodes included
+    # Ensure isolated nodes are included
     for node, data in G_temporal.nodes(data=True):
         if node not in agg:
             agg.add_node(node)
-    
-    # Compute pagerank using 'weight' attribute
+    # Compute PageRank using 'weight' attribute
     try:
         page_rank = nx.pagerank(agg, weight='weight')
     except Exception as e:
         logger.warning("PageRank failed (%s), falling back to unweighted", e)
         page_rank = nx.pagerank(agg)
-    
-    # get top_q nodes 
+    # Get top_q nodes
     sorted_page_rank = sorted(page_rank.items(), key=lambda kv: kv[1], reverse=True)
     top_nodes = [node for node, _ in sorted_page_rank[:top_q]]
     logger.info("Top-%d nodes by weighted PageRank: %s", top_q, top_nodes)
     
     # Extract subgraph: include any node in the same connected component (undirected) as top nodes
-    und = agg.to_undirected()
     nodes_to_keep = set()
+    K_HOPS = 1
+    
+    und_graph = agg.to_undirected()
     for top_node in top_nodes:
-        if top_node in und:
-            comp = next((c for c in nx.connected_components(und) if top_node in c), None)
-            if comp:
-                nodes_to_keep.update(comp)
-                
-        else:
-            nodes_to_keep.add(top_node)
+        if top_node in und_graph:
+            # Descendants within K hops
+            fwd_graph = nx.ego_graph(und_graph, top_node, radius=K_HOPS, undirected=False)
+            nodes_to_keep.update(fwd_graph.nodes())
+            
+            # Ancestors within K hops
+            rev_graph = nx.ego_graph(und_graph, top_node, radius=K_HOPS, undirected=False)
+            nodes_to_keep.update(rev_graph.nodes())
+    logger.info("Nodes to keep in G_TRR: %d", len(nodes_to_keep))
     
     # Build subgraph from original temporal multi-digraph but collapsed similarity to DiGraph
     G_trr = nx.DiGraph()
-    for u, v, data in G_temporal.edges(data=True):
-        if u in nodes_to_keep and v in nodes_to_keep:
-            w = data.get("weight", 1.0)
-            relation = data.get("relation", "impacts")
-            if G_trr.has_edge(u, v):
-                G_trr[u][v]["weight"] += w 
-                # collect relation types (as list)
-                if relation not in G_trr[u][v].get("relations", []):
-                    G_trr[u][v]['relations'].append(relation)
-            else:
-                G_trr.add_edge(u, v, weight=w, relations=[relation])
-            
-    # copy node attributes 
+    
+    G_sub = G_temporal.subgraph(nodes_to_keep)
+    
+    # add edges 
+    for u, v, data in G_sub.edges(data=True):
+        w = data.get("weight", 1.0)
+        relation = data.get("relation", "impacts")
+        
+        if G_trr.has_edge(u, v):
+            G_trr[u][v]["weight"] += w 
+            # collect relation types (as list)
+            if relation not in G_trr[u][v].get("relations", []):
+                G_trr[u][v]['relations'].append(relation)
+        else:
+            # if edge not exist, add new
+            G_trr.add_edge(u, v, weight=w, relations=[relation])
+    # copy node attributes
     for node in nodes_to_keep:
         if node in G_temporal.nodes:
+            # add node with its attributes
             G_trr.add_node(node, **G_temporal.nodes[node])
-    
     logger.info("Extracted G_TRR: %d nodes, %d edges", G_trr.number_of_nodes(), G_trr.number_of_edges())
     return G_trr, top_nodes
-                    
-     
+            
 # -----------------------------
 # Export relational tuples for Phase B
 # -----------------------------
@@ -453,9 +454,7 @@ def build_phase_A_pipeline(limit_docs: Optional[int] = None,
     # 5) Prepare relational tuples for Phase B
     tuples = graph_to_relational_tuples(G_trr)
     
-    # 6) Save to Neo4j
-    if save_to_neo4j:
-        save_trr_to_neo4j(G_trr)
+
     
     return G_trr, tuples 
 

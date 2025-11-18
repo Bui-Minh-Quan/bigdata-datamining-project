@@ -8,7 +8,7 @@ from typing import List, Dict, Optional
 import requests
 import pandas as pd
 from dateutil import parser
-from data_preprocessing import preprocess_news_df
+from .data_preprocessing import preprocess_news_df
 
 # =========================
 # CONFIG
@@ -143,11 +143,11 @@ def save_to_csv(posts: List[Dict]):
     logger.info(f"Saved {len(df)} posts to {filename}")
 
 # =========================
-# Main
+# Main function of news crawling
 # =========================
-def main():
+def main_news_crawl():
     raw_posts = crawl_news()
     save_to_csv(raw_posts)
 
 if __name__ == "__main__":
-    main()
+    main_news_crawl()
