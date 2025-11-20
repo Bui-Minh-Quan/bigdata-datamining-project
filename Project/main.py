@@ -4,6 +4,8 @@ import time
 import sys
 import os
 
+from database.db import get_database
+
 # --- 1. CRAWLING IMPORTS ---
 # Đảm bảo tên hàm khớp với file trong folder crawling
 from crawling.news_daily_crawl import main_news_crawling
@@ -61,6 +63,9 @@ def run_full_pipeline(target_date_input):
     
     # Bước này thường dùng MongoDB query string
     run_summarization()
+    db = get_database()
+    summ_count = db['summarized_news'].count_documents({"date": target_date_str})
+    print(f"📊 Kiểm tra MongoDB: Tìm thấy {summ_count} bài báo đã tóm tắt cho ngày {target_date_str}")
     
     # Extractor dùng string cho MongoDB
     daily_graph = build_daily_knowledge_graph_batch(target_date_str)

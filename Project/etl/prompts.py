@@ -1,238 +1,204 @@
 from langchain_core.prompts import PromptTemplate
 
+# =============================================================================
+# 1. ENTITY EXTRACTION (Xử lý 1 bài lẻ)
+# =============================================================================
+ENTITY_EXTRACTION_PROMPT = PromptTemplate.from_template("""Bạn là chuyên gia phân tích tài chính. Nhiệm vụ của bạn là trích xuất các thực thể (Cổ phiếu, Công ty, Ngành, Quốc gia...) chịu ảnh hưởng từ bài báo.
 
-ENTITY_EXTRACTION_PROMPT = PromptTemplate.from_template("""Bạn được cho một hoặc nhiều bài báo, bao gồm tựa đề và mô tả ngắn gọn về bài báo đó, ngoài ra bạn có
-thông tin về ngày xuất bản của bài báo, và loại chủ đề mà bài báo đang đề cập tới.
+DANH MỤC CỔ PHIẾU CẦN THEO DÕI (PORTFOLIO):
+{portfolio}
 
-Lưu ý [QUAN TRỌNG, không được bỏ qua]: 
-   - Hạn chế tạo mới một thực thể, chỉ tạo liên kết tới 5 thực thể. 
-   - Luôn ưu tiên liên kết với các thực thể đã có: {existing_entities}
+QUY TẮC BẮT BUỘC (CRITICAL RULES):
+1. NẾU thực thể là công ty trong Portfolio trên:
+   - BẮT BUỘC chỉ dùng MÃ CỔ PHIẾU làm tên thực thể.
+   - Ví dụ: Dùng "HPG" (thay vì "Tập đoàn Hòa Phát"), dùng "MWG" (thay vì "Thế giới di động").
+   - KHÔNG thêm tên ngành hay mô tả vào trong tên (VD: Sai -> "FPT Công nghệ", Đúng -> "FPT").
+2. NẾU thực thể không nằm trong Portfolio:
+   - Dùng tên ngắn gọn, phổ biến nhất. Ví dụ: "Ngành thép", "Ngân hàng Nhà nước".
+3. Luôn ưu tiên liên kết với các thực thể đã có: {existing_entities}
+4. Chỉ trích xuất tối đa 5 thực thể quan trọng nhất.
 
-Bạn cần phân tích bài báo, đưa ra tên của những thực thể (ví dụ như cổ phiếu, ngành nghề, công ty, quốc gia, tỉnh thành...)
-sẽ bị ảnh hưởng trực tiếp bởi thông tin của bài báo, theo hướng tích cực hoặc tiêu cực.
-
-Với mỗi thực thể, ở phần Tên thực thể, hạn chế dùng dấu chấm, gạch ngang, dấu và &, dấu chấm phẩy ;. Và cần ghi thêm quốc gia, địa phương cụ thể và ngành nghề của nó (nếu có).
-Tên chỉ nói tới một thực thể duy nhất. Phần Tên không được quá phức tạp, đơn giản nhất có thể.
-Nếu thực thể nào thuộc danh mục cổ phiếu sau: {portfolio}, hãy ghi rõ tên cổ phiếu.
-Ví dụ: SSI Chứng khoán; Ngành công nghiệp Việt Nam; Người dùng Mỹ; Ngành thép Châu Á; Ngành du lịch Hạ Long, ...
-
-Ghi nhớ, Hạn chế tạo mới một thực thể, chỉ tạo liên kết tới 5 thực thể. Luôn cố liên kết với các thực thể đã có.
-
-Phần giải thích mỗi thực thể, bắt buộc đánh giá số liệu được ghi, nhiều hoặc ít, tăng hoặc giảm, gấp bao nhiêu lần, ...
-Cần cố gắng liên kết với nhiều thực thể khác. Tuy nhiên không suy ngoài phạm vi bài báo. Không tự chèn số liệu ngoài bài báo.
-Không dùng dấu hai chấm trong phần giải thích, chỉ dùng hai chấm : để tách giữa Tên thực thể và phần giải thích.
-                                                          
-Đưa ra theo định dạng sau:
+Định dạng trả về:
 [[POSITIVE]]
-[Entity 1]: [Explanation]
-...
-[Entity N]: [Explanation]
+[Mã_CP_hoặc_Tên_Thực_Thể]: [Giải thích ngắn gọn nguyên nhân và số liệu]
 
 [[NEGATIVE]]
-[Entity A]: [Explanation]
-..
-[Entity Z]: [Explanation]
-                                                          
-Một ví dụ cho bài báo:
+[Mã_CP_hoặc_Tên_Thực_Thể]: [Giải thích ngắn gọn nguyên nhân và số liệu]
 
-(BẮT ĐẦU VÍ DỤ)
+----------------
+(VÍ DỤ MINH HỌA)
 
-Ngày đăng: 2025-01-01T00:00:00+07:00
-Mã cổ phiếu liên quan: (không có)
-Tựa đề: Số lượng hóa đơn khởi tạo từ máy tính tiền tăng gấp 13 lần năm 2023
-
-Mô tả: Tỷ lệ cơ sở kinh doanh sử dụng hóa đơn điện tử tăng mạnh, với số lượng hóa đơn từ máy tính tiền tăng gấp 13 lần so với năm trước. Ngành bán lẻ và dịch vụ hưởng lợi lớn từ chuyển đổi số này.
-
-Danh sách thực thể sẽ bị ảnh hưởng:
+Bài báo: Lợi nhuận Hòa Phát tăng gấp đôi nhờ giá thép hồi phục. Vingroup mở bán dự án mới.
+Danh sách thực thể:
 
 [[POSITIVE]]
-Ngành bán lẻ Việt Nam: Số lượng hóa đơn điện tử từ máy tính tiền tăng gấp 13 lần trong năm 2023, giúp tăng hiệu quả quản lý và giảm chi phí vận hành
-MWG Bán lẻ: Là chuỗi bán lẻ lớn, hưởng lợi trực tiếp từ việc số hóa hóa đơn tăng 13 lần, cải thiện khả năng quản lý tồn kho và dòng tiền
-Ngành công nghệ Việt Nam: Cung cấp giải pháp hóa đơn điện tử và máy tính tiền cho hàng nghìn cơ sở kinh doanh, doanh thu dự kiến tăng mạnh
-FPT Công nghệ: Là nhà cung cấp giải pháp chuyển đổi số hàng đầu, hưởng lợi từ nhu cầu triển khai hóa đơn điện tử tăng đột biến
+Ngành thép: Hưởng lợi từ giá bán phục hồi, biên lợi nhuận cải thiện.
+HPG: Là doanh nghiệp đầu ngành thép, lợi nhuận tăng gấp đôi so với cùng kỳ.
+VIC: Tăng trưởng doanh thu nhờ mở bán thành công dự án bất động sản mới.
 
-[[NEGATIVE]]
-(Không có thực thể bị ảnh hưởng tiêu cực rõ ràng từ bài báo này)
+(HẾT VÍ DỤ)
+----------------
 
-(KẾT THÚC VÍ DỤ)
-
+DỮ LIỆU ĐẦU VÀO:
 Ngày đăng: {date}
-Mã cổ phiếu liên quan: {stockCodes}
-Tựa đề: {title}
-
+Mã liên quan: {stockCodes}
+Tiêu đề: {title}
 Mô tả: {description}
 
 Danh sách thực thể sẽ bị ảnh hưởng:
 """)
 
-RELATION_EXTRACTION_PROMPT = PromptTemplate.from_template("""Bạn đang làm việc dưới bối cảnh phân tích kinh tế.                                                            
-Hạn chế tạo mới một thực thể, chỉ được tạo mới tối đa 2 thực thể mới. Chỉ được liên kết tới 4 thực thể khác. Luôn ưu tiên liên kết với các thực thể đã có: {existing_entities}
+# =============================================================================
+# 2. RELATION EXTRACTION (Xử lý quan hệ 1-1)
+# =============================================================================
+RELATION_EXTRACTION_PROMPT = PromptTemplate.from_template("""Bạn đang phân tích hiệu ứng dây chuyền trong kinh tế.
+Dựa trên tác động đến "Thực thể gốc", hãy suy luận các thực thể khác bị ảnh hưởng tiếp theo.
 
-Dựa trên tác động đến một thực thể, hãy liệt kê các thực thể sẽ bị ảnh hưởng tiêu cực và ảnh hưởng tích cực do hiệu ứng dây chuyền.
-Hãy suy luận xem thực thể hiện tại này có thể ảnh hưởng tiếp đến những thực thể khác nào, theo hướng tích cực hoặc tiêu cực.
-                                                            
-Với mỗi thực thể, ở phần Tên thực thể, hạn chế dùng dấu chấm, gạch ngang, dấu và &, dấu chấm phẩy ;. Cần ghi thêm quốc gia, địa phương cụ thể và ngành nghề của nó (nếu có). 
-Tên chỉ nói tới một thực thể duy nhất. Phần Tên không được quá phức tạp, đơn giản nhất có thể.
-Nếu thực thể nào thuộc danh mục cổ phiếu sau: {portfolio}, hãy ghi rõ tên cổ phiếu.
-Ví dụ: SSI Chứng khoán; Ngành công nghiệp Việt Nam; Người dùng Mỹ; Ngành thép Châu Á; Ngành du lịch Hạ Long, ...
+DANH MỤC ĐẦU TƯ: {portfolio}
+THỰC THỂ ĐÃ CÓ: {existing_entities}
 
-Ghi nhớ, Hạn chế tạo mới thực thể, chỉ được tạo mới tối đa 2 thực thể mới. Chỉ được liên kết tới 4 thực thể khác. Luôn cố liên kết với các thực thể đã có.
+QUY TẮC ĐẶT TÊN THỰC THỂ:
+- TUYỆT ĐỐI TUÂN THỦ: Nếu nhắc đến công ty trong danh mục đầu tư, PHẢI dùng MÃ CỔ PHIẾU (Ví dụ: HPG, VCB, FPT).
+- KHÔNG dùng tên dài dòng như "Tập đoàn FPT", "Cổ phiếu VCB". Chỉ dùng mã 3 chữ cái.
+- Hạn chế tạo thực thể mới, ưu tiên dùng lại thực thể đã có.
 
-Phần giải thích mỗi thực thể, bắt buộc đánh giá số liệu được ghi, nhiều hoặc ít, tăng hoặc giảm, gấp bao nhiêu lần, ...
-Cần cố gắng liên kết với nhiều thực thể khác. Tuy nhiên không suy ngoài phạm vi bài báo. Không tự chèn số liệu ngoài bài báo.
-Không dùng dấu hai chấm trong phần giải thích, chỉ dùng hai chấm : để tách giữa Tên thực thể và phần giải thích.
-
-Đưa ra theo định dạng sau:
+Định dạng trả về:
 [[POSITIVE]]
-[Entity 1]: [Explanation]
+[Entity 1]: [Giải thích]
 ...
-[Entity N]: [Explanation]
-
 [[NEGATIVE]]
-[Entity A]: [Explanation]
-..
-[Entity Z]: [Explanation]
+[Entity A]: [Giải thích]
+...
 
-(BẮT ĐẦU VÍ DỤ)
+(VÍ DỤ)
+Thực thể gốc: Bộ Xây dựng
+Ảnh hưởng: Thúc đẩy giải ngân đầu tư công cho 3000km cao tốc.
 
-Thực thể gốc: Bộ Xây dựng Việt Nam
-
-Ảnh hưởng: Áp lực quản lý 28 dự án với tổng chiều dài 1188 km, nhằm hiện thực hóa mục tiêu đạt 3000 km cao tốc vào năm 2025. Số lượng dự án tăng gấp nhiều lần so với giai đoạn trước, đòi hỏi điều phối nguồn lực và kiểm soát tiến độ chặt chẽ hơn.
-
-Danh sách thực thể sẽ bị ảnh hưởng bởi hiệu ứng dây chuyền:
-
+Kết quả suy luận:
 [[POSITIVE]]
-Doanh nghiệp xây dựng Việt Nam: Có cơ hội mở rộng hợp đồng thi công, tăng doanh thu nhờ số lượng dự án cao tốc lớn đang triển khai đồng loạt.
-Người lao động Việt Nam: Có thêm nhiều cơ hội việc làm từ các dự án thi công trải dài khắp cả nước.
-
+HPG: Nhu cầu thép xây dựng tăng cao nhờ các dự án cao tốc trọng điểm.
+Ngành xây dựng hạ tầng: Khối lượng công việc tăng mạnh, đảm bảo doanh thu gối đầu.
 [[NEGATIVE]]
-Bộ Giao thông Vận tải Việt Nam: Chịu áp lực phối hợp và giám sát hiệu quả giữa các bên liên quan, có nguy cơ bị chỉ trích nếu dự án chậm tiến độ.
-Doanh nghiệp xây dựng Việt Nam: Có thể chịu áp lực tăng giá nguyên vật liệu và thiếu hụt nguồn cung do nhu cầu tăng đột biến.
-
-(KẾT THÚC VÍ DỤ)
+Ngân sách Nhà nước: Áp lực cân đối vốn lớn trong ngắn hạn.
+(HẾT VÍ DỤ)
 
 Thực thể gốc: {entities}
+Ảnh hưởng ban đầu: {description}
 
-Ảnh hưởng: {description}
-
-Danh sách thực thể sẽ bị ảnh hưởng bởi hiệu ứng dây chuyền:
+Danh sách thực thể bị ảnh hưởng tiếp theo (Hiệu ứng dây chuyền):
 """)
 
-# Template batch relation extraction (xử lý nhiều thực thể cùng lúc)
-BATCH_RELATION_EXTRACTION_PROMPT = PromptTemplate.from_template("""Bạn đang làm việc dưới bối cảnh phân tích kinh tế.
-Hạn chế tạo mới thực thể, chỉ được tạo mới tối đa 2 thực thể mới cho mỗi thực thể gốc. Chỉ được liên kết tối đa 3 thực thể khác cho mỗi thực thể gốc. Luôn ưu tiên liên kết với các thực thể đã có: {existing_entities}
+# =============================================================================
+# 3. BATCH RELATION EXTRACTION (Xử lý nhiều thực thể cùng lúc - Phase 2)
+# =============================================================================
+BATCH_RELATION_EXTRACTION_PROMPT = PromptTemplate.from_template("""Bạn đang phân tích chuỗi cung ứng và tác động kinh tế.
+Dưới đây là danh sách các thực thể và tác động họ đang chịu. Hãy suy luận xem điều này ảnh hưởng tiếp đến ai?
 
-Dựa trên tác động đến các thực thể đầu vào, hãy phân tích hiệu ứng dây chuyền. 
-Hãy suy luận xem mỗi thực thể hiện tại có thể ảnh hưởng tiếp đến những thực thể khác nào, theo hướng tích cực hoặc tiêu cực.
+DANH MỤC ƯU TIÊN (PORTFOLIO): {portfolio}
+THỰC THỂ ĐÃ CÓ: {existing_entities}
 
-Với mỗi thực thể, ở phần Tên thực thể, hạn chế dùng dấu chấm, gạch ngang, dấu và &, dấu chấm phẩy ;. Cần ghi thêm quốc gia, địa phương cụ thể và ngành nghề của nó (nếu có).
-Tên chỉ nói tới một thực thể duy nhất. Phần Tên không được quá phức tạp, đơn giản nhất có thể.
-Nếu thực thể nào thuộc danh mục cổ phiếu sau: {portfolio}, hãy ghi rõ tên cổ phiếu.
-Ví dụ: SSI Chứng khoán; Ngành công nghiệp Việt Nam; Người dùng Mỹ; Ngành thép Châu Á; Ngành du lịch Hạ Long, ...
+LUẬT BẤT DI BẤT DỊCH:
+1. Khi output tên thực thể, nếu là công ty trong Portfolio, CHỈ VIẾT MÃ CỔ PHIẾU (VD: VHM, MSN, GAS).
+2. Không viết: "Vinhomes", "Masan Group". Phải viết: "VHM", "MSN".
+3. Mỗi thực thể gốc chỉ suy luận ra tối đa 2 thực thể bị ảnh hưởng tiếp theo.
 
-Phần giải thích mỗi thực thể, bắt buộc đánh giá số liệu được ghi, nhiều hoặc ít, tăng hoặc giảm, gấp bao nhiêu lần...
-Cần cố gắng liên kết với nhiều thực thể khác. Tuy nhiên không suy ngoài phạm vi bài báo. Không tự chèn số liệu ngoài bài báo.
-Không dùng dấu hai chấm trong phần giải thích, chỉ dùng hai chấm : để tách giữa Tên thực thể và phần giải thích.
-
-Đưa ra theo định dạng sau cho mỗi thực thể nguồn:
-
+Định dạng Output:
 [[SOURCE: Tên thực thể nguồn]]
 [[IMPACT: POSITIVE/NEGATIVE]]
 
 [[POSITIVE]]
-[Thực thể ảnh hưởng 1]: [Giải thích]
-[Thực thể ảnh hưởng 2]: [Giải thích]
-[Thực thể ảnh hưởng 3]: [Giải thích]
+[Tên Thực Thể A]: [Giải thích]
+[Tên Thực Thể B]: [Giải thích]
 
 [[NEGATIVE]]
-[Thực thể ảnh hưởng A]: [Giải thích]
-[Thực thể ảnh hưởng B]: [Giải thích]
-[Thực thể ảnh hưởng C]: [Giải thích]
+[Tên Thực Thể C]: [Giải thích]
 
-
-LƯU Ý [RẤT QUAN TRỌNG]:
-   - Có thể có RẤT NHIỀU thực thể đầu vào, hãy phân tích CẨN THẬN từng thực thể để không bỏ sót. Không được tạo thêm thực thể gốc. 
-   - Bạn sẽ phân tích nhiều thực thể gốc một lúc. Với TỪNG thực thể, chỉ chọn CHÍNH XÁC 2-3 thực thể ảnh hưởng tích cực nhất và 2-3 thực thể ảnh hưởng tiêu cực quan trọng nhất.
-   - Thực thể nguồn trong [[SOURCE: ...]] CHỈ chứa TÊN THỰC THỂ GỐC từ danh sách đầu vào, KHÔNG được thêm bất kỳ thông tin nào khác từ phần "Ảnh hưởng" hoặc giải thích.
-                                                                  
-(BẮT ĐẦU VÍ DỤ)
-Danh sách thực thể nguồn:
-
-Thực thể gốc: Bộ Xây dựng Việt Nam
-
-Ảnh hưởng: NEGATIVE, Áp lực quản lý 28 dự án với tổng chiều dài 1188 km, nhằm hiện thực hóa mục tiêu đạt 3000 km cao tốc vào năm 2025. Số lượng dự án tăng gấp nhiều lần so với giai đoạn trước, đòi hỏi điều phối nguồn lực và kiểm soát tiến độ chặt chẽ hơn.
-
----
-
-Danh sách thực thể sẽ bị ảnh hưởng bởi hiệu ứng dây chuyền:
-
-[[SOURCE: Bộ Xây dựng Việt Nam]]
-[[IMPACT: NEGATIVE]]
-
-[[POSITIVE]]
-Doanh nghiệp xây dựng Việt Nam: Có cơ hội mở rộng hợp đồng thi công, tăng doanh thu nhờ số lượng dự án cao tốc lớn đang triển khai đồng loạt.
-Người lao động Việt Nam: Có thêm nhiều cơ hội việc làm từ các dự án thi công trải dài khắp cả nước.
-
-[[NEGATIVE]]
-Bộ Giao thông Vận tải Việt Nam: Chịu áp lực phối hợp và giám sát hiệu quả giữa các bên liên quan, có nguy cơ bị chỉ trích nếu dự án chậm tiến độ.
-Doanh nghiệp xây dựng Việt Nam: Có thể chịu áp lực tăng giá nguyên vật liệu và thiếu hụt nguồn cung do nhu cầu tăng đột biến.
-
-(KẾT THÚC VÍ DỤ)
-
-Danh sách thực thể nguồn:
-
+----------------
+DANH SÁCH THỰC THỂ NGUỒN:
 {input_entities}
 
-Danh sách thực thể sẽ bị ảnh hưởng bởi hiệu ứng dây chuyền:
+SUY LUẬN HIỆU ỨNG DÂY CHUYỀN:
 """)
 
 
+# =============================================================================
+# 4. BATCH ARTICLE EXTRACTION (Prompt quan trọng nhất - Phase 1)
+# =============================================================================
 BATCH_ARTICLE_EXTRACTION_PROMPT = PromptTemplate.from_template("""
-Bạn là chuyên gia phân tích kinh tế. Dưới đây là danh sách các tin tức vắn tắt.
-Nhiệm vụ của bạn là trích xuất các thực thể (ví dụ như cổ phiếu, ngành nghề, công ty, quốc gia, tỉnh thành...) chịu ảnh hưởng từ TỪNG bài báo riêng biệt.
+Bạn là chuyên gia phân tích vĩ mô và thị trường chứng khoán (Senior Financial Analyst).
+Nhiệm vụ của bạn là xây dựng "Đồ thị Tri thức Tài chính" (Financial Knowledge Graph) từ danh sách tin tức thô.
 
+Bạn cần trích xuất các thực thể chịu tác động và cơ chế tác động của tin tức đó.
 
-Lưu ý [QUAN TRỌNG]:
-1. Xử lý từng bài báo một cách độc lập dựa trên ID.
-2. Hạn chế tạo thực thể mới, ưu tiên dùng: {existing_entities}
-3. Nếu thực thể thuộc danh mục {portfolio}, hãy ghi rõ mã tên cổ phiếu.
-4. Hãy mô tả thực thể theo đúng phạm vi: 
-   Ví dụ:
-   - “SSI Chứng khoán”
-   - “Ngành công nghiệp Việt Nam”
-   - “Người tiêu dùng Mỹ”
-   - “Ngành thép Châu Á”
-   - “Du lịch Hạ Long”
-5. Tránh bỏ sót bài báo nào.
-6. Tên chỉ nói tới một thực thể duy nhất. Phần Tên không được quá phức tạp, đơn giản nhất có thể. 
-Nếu một thực thể chỉ khác biệt nhỏ về từ ngữ nhưng cùng ý nghĩa, hãy gộp vào thực thể đã có trong {existing_entities}.
-Ví dụ: "Ngành bán lẻ Việt Nam" và "Ngành bán lẻ" -> gộp thành "Ngành bán lẻ Việt Nam".
-"Người giàu tại Việt Nam" và "Người giàu Việt Nam" -> gộp thành "Người giàu Việt Nam".
-7. Với mỗi thực thể, ở phần Tên thực thể, hạn chế dùng dấu chấm, gạch ngang, dấu và &, dấu chấm phẩy ;. Và cần ghi thêm quốc gia, địa phương cụ thể và ngành nghề của nó (nếu có).
-Tên chỉ nói tới một thực thể duy nhất. Phần Tên không được quá phức tạp, đơn giản nhất có thể.
+=========================================
+📋 THÔNG TIN QUAN TRỌNG (CONTEXT)
+=========================================
+1. DANH MỤC CỔ PHIẾU ƯU TIÊN (PORTFOLIO):
+   {portfolio}
 
-Định dạng đầu vào và đầu ra phải tuân thủ nghiêm ngặt như sau:
-----------------
-📌 **Ví dụ minh họa chuẩn về ĐẦU VÀO:**
-[ID: 1] Giá thép tăng mạnh tại Trung Quốc | Giá thép giao tháng 1 tăng 5% do nhu cầu phục hồi.
-[ID: 2] FED giữ nguyên lãi suất | FED thông báo giữ nguyên lãi suất, kỳ vọng hạ nhiệt lạm phát.
+2. CÁC THỰC THỂ ĐÃ TỒN TẠI TRONG ĐỒ THỊ:
+   {existing_entities}
+   (Lưu ý: Hãy cố gắng tái sử dụng các tên thực thể này nếu ngữ nghĩa phù hợp, tránh tạo thực thể trùng lặp)
 
-📌 **Ví dụ minh họa chuẩn về ĐẦU RA:**
+=========================================
+⚠️ QUY TẮC XỬ LÝ (BẮT BUỘC TUÂN THỦ)
+=========================================
+
+Quy tắc 1: ĐỊNH DANH CỔ PHIẾU (QUAN TRỌNG NHẤT)
+   - Nếu thực thể là công ty nằm trong danh sách PORTFOLIO, bạn **BẮT BUỘC** dùng **MÃ CỔ PHIẾU 3 CHỮ CÁI** làm tên thực thể.
+   - TUYỆT ĐỐI KHÔNG dùng tên đầy đủ, tên tiếng Việt hay tên kèm ngành nghề.
+   - Ví dụ sai ❌: "Tập đoàn Hòa Phát", "Cổ phiếu HPG", "HPG Steel", "Vinamilk".
+   - Ví dụ đúng ✅: "HPG", "VNM", "VCB", "FPT".
+
+Quy tắc 2: CHUẨN HÓA THỰC THỂ PHI CỔ PHIẾU
+   - Với các thực thể không phải cổ phiếu (Ngành, Hàng hóa, Vĩ mô), hãy dùng danh từ ngắn gọn, mang tính đại diện cao.
+   - Gộp các biến thể về một tên chuẩn.
+   - Ví dụ: "Giá dầu thế giới", "Giá dầu thô", "Thị trường dầu" -> Gộp thành: "Giá dầu".
+   - Ví dụ: "Chính phủ VN", "Nhà nước Việt Nam" -> Gộp thành: "Chính phủ Việt Nam".
+
+Quy tắc 3: PHÂN TÍCH TÁC ĐỘNG (IMPACT)
+   - Chỉ trích xuất tối đa **3-4 thực thể** quan trọng nhất chịu ảnh hưởng trực tiếp.
+   - Phần giải thích phải ngắn gọn, chứa từ khóa kinh tế (doanh thu, lợi nhuận, chi phí đầu vào, tâm lý thị trường, tỷ giá...).
+   - Nếu tin tức có số liệu cụ thể (tăng 5%, lãi 1000 tỷ...), hãy đưa vào phần giải thích.
+
+=========================================
+📝 ĐỊNH DẠNG GIAO TIẾP
+=========================================
+Dữ liệu đầu vào (Batch):
+[ID: 1] Tiêu đề bản tin | Nội dung tóm tắt...
+[ID: 2] Tiêu đề bản tin | Nội dung tóm tắt...
+
+Dữ liệu đầu ra mong đợi:
 [[ARTICLE_ID: 1]]
 [[POSITIVE]]
-[Ngành thép Châu Á]: Giá thép tăng nhờ nhu cầu phục hồi tại Trung Quốc.
+[Mã_CP_hoặc_Tên_Chuẩn]: [Lý do ngắn gọn]
 [[NEGATIVE]]
-[Doanh nghiệp xây dựng Việt Nam]: Chi phí đầu vào tăng có thể ảnh hưởng biên lợi nhuận.
+[Mã_CP_hoặc_Tên_Chuẩn]: [Lý do ngắn gọn]
+
+-----------------------------------------
+VÍ DỤ MINH HỌA (MẪU CHUẨN):
+
+Input:
+[ID: 1] Giá thép HRC tại Trung Quốc phục hồi mạnh, Hòa Phát đặt kế hoạch lãi 10.000 tỷ.
+[ID: 2] Ngân hàng Nhà nước hút ròng tín phiếu, tỷ giá hạ nhiệt.
+
+Output:
+[[ARTICLE_ID: 1]]
+[[POSITIVE]]
+[HPG]: Kế hoạch lợi nhuận khả quan và hưởng lợi từ xu hướng giá thép thế giới phục hồi.
+[Ngành thép]: Giá bán đầu ra tăng giúp cải thiện biên lợi nhuận gộp.
+[[NEGATIVE]]
+[Ngành xây dựng]: Áp lực chi phí nguyên vật liệu đầu vào tăng cao.
 
 [[ARTICLE_ID: 2]]
 [[POSITIVE]]
-[Thị trường chứng khoán Mỹ]: Giữ nguyên lãi suất hỗ trợ tâm lý tích cực.
+[Tỷ giá USD/VND]: Giảm áp lực tăng giá nhờ động thái hút tiền của NHNN.
 [[NEGATIVE]]
-[Ngành ngân hàng Mỹ]: Biên lợi nhuận lãi vay không tăng do không nâng lãi suất.
+[Thị trường chứng khoán]: Tâm lý thận trọng do lo ngại thanh khoản hệ thống bị thu hẹp.
 
-----------------
-DANH SÁCH TIN TỨC CẦN XỬ LÝ:
+-----------------------------------------
+BẮT ĐẦU XỬ LÝ DANH SÁCH DƯỚI ĐÂY:
 {batch_content}
 
-BẮT ĐẦU TRÍCH XUẤT:
+KẾT QUẢ TRÍCH XUẤT:
 """)

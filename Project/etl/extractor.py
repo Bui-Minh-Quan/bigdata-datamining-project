@@ -6,6 +6,7 @@ import time
 import os 
 import sys 
 import re
+from datetime import datetime
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(ROOT_DIR)
@@ -33,6 +34,20 @@ results_lock = Lock()
 PORTFOLIO_STOCKS = ["FPT", "SSI", "VCB", "VHM", "HPG", "GAS", "MSN", "MWG", "GVR", "VIC"]
 PORTFOLIO_SECTOR = ["Công nghệ", "Chứng khoán", "Ngân hàng", "Bất động sản", "Vật liệu cơ bản", 
                      "Dịch vụ Hạ tầng", "Tiêu dùng cơ bản", "Bán lẻ", "Chế biến", "Bất động sản"]
+ALIAS_MAP = {
+    "THẾ GIỚI DI ĐỘNG": "MWG",
+    "TẬP ĐOÀN HÒA PHÁT": "HPG",
+    "HÒA PHÁT": "HPG",
+    "VINGROUP": "VIC",
+    "VINHOMES": "VHM",
+    "VIETCOMBANK": "VCB",
+    "NGÂN HÀNG NGOẠI THƯƠNG": "VCB",
+    "PETROVIETNAM GAS": "GAS",
+    "PV GAS": "GAS",
+    "MASAN": "MSN",
+    "FPT CORP": "FPT",
+    "TẬP ĐOÀN CAO SU": "GVR"
+}
 
 PORTFOLIO_STR = ", ".join([f"{s}-{sec}" for s, sec in zip(PORTFOLIO_STOCKS, PORTFOLIO_SECTOR)])
 
@@ -40,7 +55,56 @@ BASE_DELAY = 30
 MAX_RETRIES = 3
 MAX_WORKERS = 1  
 
+def classify_entity(entity_name):
+    entity_upper = entity_name.upper().strip()
+    
+    # 1. Check Alias Map trước
+    if entity_upper in ALIAS_MAP:
+        return "Stock", ALIAS_MAP[entity_upper]
+        
+    # 2. Check containment như ở giải pháp 1
+    for stock in PORTFOLIO_STOCKS:
+        if stock == entity_upper or f"({stock})" in entity_upper:
+             return "Stock", stock
+             
+    return "Entity", entity_name
 
+
+
+
+# ------------------------
+#    CACHE FUNCTIONS 
+# ------------------------
+cache_collection = db['graph_extraction_cache']
+cache_collection.create_index("article_id", unique=True)
+
+def get_cached_extractions(article_ids):
+    """
+    Lấy các kết quả đã trích xuất từ cache
+    Input: List of article_ids (strings)
+    Output: Dict {article_id: data}
+    """
+    cursor = cache_collection.find({"article_id": {"$in": article_ids}})
+    return {doc["article_id"]: doc for doc in cursor}
+
+def save_extraction_to_cache(article_id, entities, relations):
+    """
+    Lưu kết quả trích xuất vào MongoDB để dùng lại sau này
+    """
+    doc = {
+        "article_id": article_id,
+        "entities": list(entities),     # List of (name, type, reason)
+        "relations": list(relations),   # List of (source, target, impact, reason)
+        "processed_at": datetime.now()
+    }
+    try:
+        cache_collection.update_one(
+            {"article_id": article_id}, 
+            {"$set": doc}, 
+            upsert=True
+        )
+    except Exception as e:
+        print(f"⚠️ Lỗi lưu cache cho bài {article_id}: {e}")
 
 # ------------------------
 #    Helper functions 
@@ -87,14 +151,16 @@ def parse_batch_articles_response(response_content):
     
     content = str(response_content)
     results = {}
-    parts = re.split(r"\[\[ARTICLE_ID:\s*(.+?)\s*\]\]", content)
+    # Regex linh hoạt hơn: Bắt được cả "ARTICLE_ID: 1", "Article ID: 1", v.v.
+    # Flag (?i) để không phân biệt hoa thường
+    parts = re.split(r"\[\[(?:ARTICLE_)?ID:\s*(.+?)\s*\]\]", content, flags=re.IGNORECASE)
     
+    # Parts[0] là text thừa trước tag đầu tiên
     for i in range(1, len(parts), 2):
-        article_id = parts[i].strip()
+        article_id = parts[i].strip().strip('"').strip("'") # Bỏ cả dấu nháy nếu có
         body = parts[i+1].strip()
         results[article_id] = body 
         
-    
     return results
     
     
@@ -265,25 +331,30 @@ def process_batch_relations(batch, G, canonical_entities, api_manager, article_t
         "existing_entities": existing_entities
     }
     
-    # --- SỬA: Truyền thẳng Prompt Template (không tạo chain = get_llm_chain ở đây nữa) ---
+    # Gọi LLM
     response = invoke_chain_with_retry(BATCH_RELATION_EXTRACTION_PROMPT, prompt_inputs, api_manager)
-    # -------------------------------------------------------------------------------------
     
     relations = parse_batch_entity_response(response)
     new_entities = []
     
     for source, impact, target, content in relations:
         with canonical_lock:
-            canon_source = merge_entity(source, canonical_entities)
-            canon_target = merge_entity(target, canonical_entities)
+            raw_source = merge_entity(source, canonical_entities)
+            raw_target = merge_entity(target, canonical_entities)
+        
+        # --- ĐOẠN SỬA QUAN TRỌNG: Phân loại lại Source và Target ---
+        type_source, canon_source = classify_entity(raw_source)
+        type_target, canon_target = classify_entity(raw_target)
             
         with graph_lock:
-            # add nodes 
-            for node in [canon_source, canon_target]:
-                if not G.has_node(node):
-                    node_type = "Stock" if node in PORTFOLIO_STOCKS else "Entity"
-                    G.add_node(node, type=node_type, updated_at = article_timestamp)
-            # add edge
+            # Add nodes (Dùng tên đã chuẩn hóa)
+            if not G.has_node(canon_source):
+                G.add_node(canon_source, type=type_source, updated_at=article_timestamp)
+            
+            if not G.has_node(canon_target):
+                G.add_node(canon_target, type=type_target, updated_at=article_timestamp)
+                
+            # Add edge
             if not G.has_edge(canon_source, canon_target):
                 G.add_edge(canon_source, canon_target, impact=impact, description=content, date=article_timestamp)
         
@@ -356,7 +427,7 @@ def process_single_article(article, G, canonical_entities, api_manager):
             
             
 # Process a batch of articles            
-def process_article_batch(articles_batch, G, canonical_entities, api_manager):
+def process_article_batch2(articles_batch, G, canonical_entities, api_manager):
     batch_content = ""
     
     id_map = {}
@@ -452,6 +523,158 @@ def process_article_batch(articles_batch, G, canonical_entities, api_manager):
         for i in range(0, len(unique_frontier), BATCH_SIZE):
             batch = unique_frontier[i: i + BATCH_SIZE]
             process_batch_relations(batch, G, canonical_entities, api_manager, articles_batch[0].get('date', ''))
+            
+
+# HÀM XỬ LÝ BATCH (ĐÃ FIX LỖI ID + FIX LỖI STOCK)
+def process_article_batch(articles_batch, G, canonical_entities, api_manager):
+    # 1. Tách bài nào ĐÃ LÀM và CHƯA LÀM
+    article_ids = [str(a['_id']) for a in articles_batch]
+    cached_data = get_cached_extractions(article_ids)
+    
+    articles_to_process = [] 
+    articles_done = []       
+    
+    for article in articles_batch:
+        a_id = str(article['_id'])
+        if a_id in cached_data:
+            articles_done.append(article)
+        else:
+            articles_to_process.append(article)
+            
+    # 2. Dựng đồ thị cho bài ĐÃ LÀM (Từ Cache)
+    if articles_done:
+        build_graph_from_cache(articles_done, cached_data, G, canonical_entities)
+
+    # 3. Xử lý bài CHƯA LÀM (Gọi LLM)
+    if not articles_to_process:
+        return 
+
+    print(f"⚡ Đang xử lý {len(articles_to_process)} bài mới bằng LLM...")
+    
+    batch_content = ""
+    index_map = {} # Map ID giả (1,2,3) -> Article thật
+    
+    for idx, article in enumerate(articles_to_process, 1):
+        simulated_id = str(idx)
+        index_map[simulated_id] = article
+        
+        title = article.get("title", "Không có tiêu đề")
+        description = article.get("description") or article.get("summary") or ""
+        if not description and article.get("content"):
+             description = article.get("content")[:200] + "..."
+             
+        batch_content += f"[ID: {simulated_id}] Tiêu đề: {title} | Nội dung: {description}\n\n"
+        
+    with graph_lock:
+        existing = get_graph_context(G)
+    
+    prompt_inputs = {
+        "batch_content": batch_content,
+        "existing_entities": existing,
+        "portfolio": PORTFOLIO_STR
+    }
+    
+    try:
+        response = invoke_chain_with_retry(BATCH_ARTICLE_EXTRACTION_PROMPT, prompt_inputs, api_manager)
+        if not response: return
+    except Exception as e:
+        print(f"Error invoking LLM for batch: {e}")
+        return
+
+    # Parse response (Hàm parse này cần regex linh hoạt như đã bàn)
+    parsed_results = parse_batch_articles_response(response.content)
+    
+    frontier = [] 
+    
+    for simulated_id, extraction_text in parsed_results.items():
+        clean_id = simulated_id.strip().strip('"').strip("'")
+        original_article = index_map.get(clean_id)
+        
+        if not original_article:
+            continue
+        
+        real_mongo_id = str(original_article['_id'])
+        
+        class MockResponse: content = extraction_text
+        entities_dict = parse_entity_response(MockResponse())
+        date_str = original_article.get("date", "")
+        
+        # Create article node
+        article_node = f"Article_{real_mongo_id}"
+        with graph_lock:
+            if not G.has_node(article_node):
+                G.add_node(article_node, type="Article", title=original_article.get("title", ""), date=date_str)
+        
+        cache_entities = [] 
+        
+        for impact_type, items in entities_dict.items():
+            for entity_name, reason in items:
+                with canonical_lock:
+                    raw_entity = merge_entity(entity_name, canonical_entities)
+                
+                # --- ĐOẠN SỬA QUAN TRỌNG: ÉP KIỂU VỀ STOCK ---
+                node_type, canon_entity = classify_entity(raw_entity)
+                
+                with graph_lock:
+                    # Tạo node với tên đã chuẩn hóa (VD: HPG thay vì Tập đoàn Hòa Phát)
+                    if not G.has_node(canon_entity):
+                        G.add_node(canon_entity, type=node_type, updated_at=date_str)
+                    
+                    if not G.has_edge(article_node, canon_entity):
+                        G.add_edge(article_node, canon_entity, impact=impact_type, description=reason, date=date_str)
+                        frontier.append((canon_entity, impact_type, reason))
+                
+                cache_entities.append((canon_entity, impact_type, reason))
+        
+        # Lưu cache với ID thật
+        save_extraction_to_cache(real_mongo_id, cache_entities, []) 
+
+    # Phase 2
+    BATCH_SIZE = 50
+    if frontier:
+        unique_frontier = list(set(frontier))
+        for i in range(0, len(unique_frontier), BATCH_SIZE):
+            batch = unique_frontier[i: i + BATCH_SIZE]
+            process_batch_relations(batch, G, canonical_entities, api_manager, articles_to_process[0].get('date', ''))
+
+# Function to build graph from cached data
+def build_graph_from_cache(articles, cached_data, G, canonical_entities):
+    """
+    Dựng đồ thị từ dữ liệu đã cache (không tốn API)
+    """
+    count = 0
+    for article in articles:
+        a_id = str(article['_id'])
+        cache = cached_data.get(a_id)
+        if not cache: continue
+        
+        count += 1
+        date_str = article.get('date', '')
+        
+        # 1. Tạo node Article
+        article_node = f"Article_{a_id}"
+        with graph_lock:
+            if not G.has_node(article_node):
+                G.add_node(article_node, type="Article", title=article.get("title", ""), date=date_str)
+                
+        # 2. Tái tạo Nodes & Edges từ cache
+        for ent_name, ent_type, reason in cache.get('entities', []):
+            with canonical_lock:
+                canon_entity = merge_entity(ent_name, canonical_entities)
+            with graph_lock:
+                if not G.has_node(canon_entity):
+                    # Check lại type cho chắc
+                    is_stock = any(stock in canon_entity for stock in PORTFOLIO_STOCKS)
+                    final_type = "Stock" if is_stock else "Entity"
+                    G.add_node(canon_entity, type=final_type, updated_at=date_str)
+                # Edge Article -> Entity
+                if not G.has_edge(article_node, canon_entity):
+                    impact = "RELATED" # Default if missing
+                    # Logic cũ cache lưu (name, type, reason), impact ở đâu?
+                    # Nếu cấu trúc cache cũ thiếu, ta tạm để RELATED hoặc lấy từ reason
+                    G.add_edge(article_node, canon_entity, description=reason, date=date_str)
+                    
+    print(f"✅ Đã tái tạo {count} bài báo từ Cache.")
 
 # ---- MAIN FUNCTION ----
 def build_daily_knowledge_graph(target_date):
@@ -518,7 +741,7 @@ def build_daily_knowledge_graph_batch(target_date):
     api_manager = APIKeyManager()
     
     # 3. Process articles in batches
-    BATCH_SIZE = 10
+    BATCH_SIZE = 20
     for i in range(0, len(articles), BATCH_SIZE):
         batch = articles[i: i + BATCH_SIZE]
         process_article_batch(batch, G, canonical_entities, api_manager)

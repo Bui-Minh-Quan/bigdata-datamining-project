@@ -16,6 +16,7 @@ class APIKeyManager:
     def __init__(self):
         raw_keys = [
             ("GOOGLE_API_KEY", os.getenv("GOOGLE_API_KEY")),
+            ("GOOGLE_API_KEY_1", os.getenv("GOOGLE_API_KEY_2")),
             ("GOOGLE_API_KEY_2", os.getenv("GOOGLE_API_KEY_2")),
             ("GOOGLE_API_KEY_3", os.getenv("GOOGLE_API_KEY_3")),
             ("GOOGLE_API_KEY_4", os.getenv("GOOGLE_API_KEY_4")),

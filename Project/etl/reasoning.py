@@ -72,23 +72,59 @@ class StockPredictor:
     
     def get_recent_prices(self, ticker, target_date, days=5):
         prices_col = self.db["stock_price_data"]
-        target_dt = pd.to_datetime(target_date)
-        start_dt = target_dt - pd.Timedelta(days=10)  # buffer to ensure enough trading days
         
-        cursor = prices_col.find({
-            "symbol": ticker,
-            "date": {"$gte": str(start_dt.date()), "$lt": str(target_dt.date())}
-        }).sort("date", 1)
+        # 1. Chuẩn bị mốc thời gian
+        target_dt = pd.to_datetime(target_date)
+        # Tăng buffer lên 30 ngày để đảm bảo lấy đủ 5 phiên (trừ thứ 7, CN, lễ)
+        start_dt = target_dt - pd.Timedelta(days=30)
+        
+        # Format string ngày tháng: "YYYY-MM-DD"
+        target_str = str(target_dt.date())
+        start_str = str(start_dt.date())
+
+        # 2. Query Database
+        # SỬA QUAN TRỌNG: Đổi 'date' thành 'time'
+        # Lưu ý: Bạn cũng nên check xem field mã cổ phiếu là 'symbol' hay 'code'
+        query = {
+            "symbol": ticker, 
+            "time": {"$gte": start_str, "$lt": target_str}
+        }
+        
+        # Sort theo time tăng dần để dễ xử lý
+        cursor = prices_col.find(query).sort("time", 1)
         
         prices = []
         for doc in cursor:
-            prices.append((pd.to_datetime(doc["date"]), doc["close"]))
+            # SỬA QUAN TRỌNG: Lấy value từ key 'time'
+            try:
+                # Đảm bảo format date parse được
+                p_date = pd.to_datetime(doc.get("time"))
+                p_close = doc.get("close")
+                if p_close is not None:
+                    prices.append((p_date, p_close))
+            except Exception as e:
+                print(f"Error parsing price doc: {e}")
+                continue
         
-        # Get last 'days' trading days
-        prices = sorted(prices, key=lambda x: x[0], reverse=True)[:days]
-        prices = [price for date, price in sorted(prices)]
+        # Debug log nếu không tìm thấy dữ liệu
+        if not prices:
+            print(f"⚠️ Không tìm thấy giá của {ticker} từ {start_str} đến {target_str} (Query: {query})")
+            return []
+
+        # 3. Lấy N phiên gần nhất
+        # Sắp xếp giảm dần theo ngày để lấy những ngày mới nhất trước target_date
+        prices.sort(key=lambda x: x[0], reverse=True)
         
-        return prices
+        # Cắt lấy số lượng phiên yêu cầu
+        recent_prices = prices[:days]
+        
+        # Sắp xếp lại tăng dần theo thời gian để hiển thị xu hướng (Cũ -> Mới)
+        recent_prices.sort(key=lambda x: x[0])
+        
+        # Chỉ trả về list giá đóng cửa
+        final_prices = [p[1] for p in recent_prices]
+        
+        return final_prices
     
     def predict(self, ticker, target_date, graph_context, recent_prices=None):
         # Prepare social sentiment data
@@ -133,14 +169,9 @@ class StockPredictor:
             return None
 
 if __name__ == "__main__":
-    mock_context = """
-    2025-11-19, Cơ quan quản lý nhà nước, NEGATIVE, Bộ Tài chính
-    2025-11-19, Doanh nghiệp Việt Nam, NEGATIVE, Bộ Tài chính
-    2025-11-19, VIC-Bất động sản, POSITIVE, Doanh nghiệp Việt Nam
-    """
-    
     predictor = StockPredictor()
-    result = predictor.predict("VIC", "2025-11-19", mock_context, recent_prices=[100, 102, 101, 103, 104])
-    print("Prediction Result:")
-    print(result)
+    
+    # test get recent prices
+    prices = predictor.get_recent_prices("GVR", "2025-11-18")
+    print("Recent prices for AAPL:", prices)
         
