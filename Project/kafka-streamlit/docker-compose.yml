@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # 1. Zookeeper (Bắt buộc cho Kafka hoạt động)
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: zookeeper-stock
@@ -12,17 +13,19 @@ services:
     networks:
       - stock-network
 
+  # 2. Kafka Broker (Nơi chứa dữ liệu realtime)
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka-stock
     depends_on:
       - zookeeper
     ports:
-      - "9092:9092"
-      - "29092:29092"
+      - "9092:9092" # Port này để code Python bên ngoài kết nối vào
+      - "29092:29092" # Port này để các container khác (như kafka-ui) kết nối
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # Cấu hình quan trọng để máy thật (localhost) kết nối được với Docker
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
@@ -31,38 +34,39 @@ services:
     networks:
       - stock-network
 
+  # 3. Kafka UI (Giao diện web để xem dữ liệu Kafka - rất tiện)
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui-stock
     depends_on:
       - kafka
     ports:
-      - "8081:8081"
+      - "8081:8081" # Truy cập tại http://localhost:8081
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
     networks:
       - stock-network
 
-  neo4j:
-    image: neo4j:5.13.0
-    container_name: neo4j-stock
-    ports:
-      - "7474:7474"
-      - "7687:7687"
-    environment:
-      NEO4J_AUTH: neo4j/password123
-      NEO4J_PLUGINS: '["apoc"]'
-    volumes:
-      - neo4j-data:/data
-      - neo4j-logs:/logs
-    networks:
-      - stock-network
+  # 4. Neo4j (Đã comment lại vì bạn dùng bản Local)
+  # Nếu muốn dùng bản Docker sau này, hãy bỏ comment (dấu #)
+  # neo4j:
+  #   image: neo4j:5.13.0
+  #   container_name: neo4j-stock
+  #   ports:
+  #     - "7474:7474"
+  #     - "7687:7687"
+  #   environment:
+  #     NEO4J_AUTH: neo4j/password123
+  #     NEO4J_PLUGINS: '["apoc"]'
+  #   volumes:
+  #     - neo4j-data:/data
+  #   networks:
+  #     - stock-network
 
 networks:
   stock-network:
     driver: bridge
 
-volumes:
-  neo4j-data:
-  neo4j-logs:
+# volumes:
+#   neo4j-data:
