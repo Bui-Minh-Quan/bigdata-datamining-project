@@ -1,6 +1,6 @@
 """
-Kafka Producer - Stream realtime stock prices to Kafka
-Sử dụng vnstock3 để lấy giá realtime và push vào Kafka topic
+Kafka Producer - Clean Real-time Stock Price Streaming
+Streams Vietnam stock prices to Kafka with clean logging
 """
 
 import json
@@ -9,9 +9,19 @@ from datetime import datetime
 from kafka import KafkaProducer
 from vnstock import Trading
 import logging
+import os
 
-logging.basicConfig(level=logging.INFO)
+# Clean logging setup
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(message)s',
+    datefmt='%H:%M:%S'
+)
 logger = logging.getLogger(__name__)
+
+# Suppress unnecessary logs
+logging.getLogger('kafka').setLevel(logging.WARNING)
+logging.getLogger('vnstock').setLevel(logging.WARNING)
 
 # 10 mã cổ phiếu từ portfolio
 PORTFOLIO_STOCKS = ["FPT", "SSI", "VCB", "VHM", "HPG", "GAS", "MSN", "MWG", "GVR", "VIC"]
@@ -55,7 +65,7 @@ class StockPriceProducer:
                 return None
             
             # vnstock3 returns DataFrame with multi-level columns
-            # Structure: ('listing', 'symbol'), ('match', 'match_price'), etc.
+            # Structure: ('listing', 'symbol'), his('match', 'match_price'), etc.
             prices_data = {}
             
             for idx, row in df.iterrows():
@@ -91,31 +101,27 @@ class StockPriceProducer:
             return None
     
     def send_to_kafka(self, data):
-        """
-        Gửi data lên Kafka topic
-        
-        Args:
-            data: Dictionary containing stock price data
-        """
+        """Send clean stock data to Kafka"""
         try:
             if data:
                 for symbol, price_data in data.items():
                     self.producer.send(self.topic, value=price_data)
-                    logger.info(f"📤 Sent {symbol}: {price_data['price']} VNĐ ({price_data['percent_change']}%)")
+                    # Clean log format
+                    price = price_data['price']
+                    change = price_data['percent_change']
+                    change_icon = "📈" if change >= 0 else "📉"
+                    logger.info(f"{change_icon} {symbol}: {price:,.0f} VNĐ ({change:+.2f}%)")
                 
                 self.producer.flush()
         except Exception as e:
-            logger.error(f"Error sending to Kafka: {e}")
+            logger.error(f"❌ Kafka error: {e}")
     
     def run(self, interval=5):
-        """
-        Chạy producer loop - fetch và push data mỗi interval giây
-        
-        Args:
-            interval: Seconds between each fetch (default: 5s)
-        """
-        logger.info(f"🚀 Starting producer loop (interval: {interval}s)")
-        logger.info(f"📊 Streaming stocks: {', '.join(PORTFOLIO_STOCKS)}")
+        """Run producer with clean output"""
+        print("🚀 Vietnam Stock Price Streaming")
+        print(f"📊 Symbols: {', '.join(PORTFOLIO_STOCKS)}")
+        print(f"⏱️  Interval: {interval}s")
+        print("─" * 50)
         
         try:
             while True:
@@ -123,18 +129,18 @@ class StockPriceProducer:
                 
                 if prices_data:
                     self.send_to_kafka(prices_data)
-                    logger.info(f"✅ Sent {len(prices_data)} stocks to Kafka")
+                    print(f"✅ Streamed {len(prices_data)} stocks | {datetime.now().strftime('%H:%M:%S')}")
                 else:
-                    logger.warning("⚠️ No price data available")
+                    logger.warning("⚠️ No data available")
                 
                 time.sleep(interval)
                 
         except KeyboardInterrupt:
-            logger.info("\n🛑 Stopping producer...")
+            print("\n🛑 Stopping producer...")
             self.producer.close()
-            logger.info("✅ Producer closed successfully")
+            print("✅ Stopped cleanly")
         except Exception as e:
-            logger.error(f"❌ Producer error: {e}")
+            logger.error(f"❌ Error: {e}")
             self.producer.close()
 
 if __name__ == "__main__":
@@ -143,5 +149,5 @@ if __name__ == "__main__":
         topic='stock-prices'
     )
     
-    # Stream data every 5 seconds
-    producer.run(interval=5)
+    # Stream data every 10 seconds
+    producer.run(interval=10)

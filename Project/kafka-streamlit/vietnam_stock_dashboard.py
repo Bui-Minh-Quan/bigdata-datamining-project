@@ -14,6 +14,7 @@ import threading
 import queue
 import time
 import traceback
+import random
 from kafka import KafkaConsumer
 from neo4j import GraphDatabase
 from vnstock import Quote
@@ -156,6 +157,137 @@ class VietnamStockAnalyzer:
         df['Stoch_D'] = df['Stoch_K'].rolling(window=3).mean()
         
         return df
+    
+    def fetch_intraday_data(self, symbol, interval='1m'):
+        """
+        Optimized intraday data for live chart
+        - Trading hours: 9:30→now (1m) + current intraday price  
+        - Non-trading: full history (5m)
+        """
+        from datetime import datetime, time
+        import pandas as pd
+        
+        try:
+            now = datetime.now()
+            current_time = now.time()
+            is_weekday = now.weekday() < 5
+            
+            # Trading hours: 9:30-11:30, 13:00-15:00
+            morning_start = time(9, 30)
+            morning_end = time(11, 30)
+            afternoon_start = time(13, 0)
+            afternoon_end = time(15, 0)
+            
+            is_trading_hours = is_weekday and (
+                (morning_start <= current_time <= morning_end) or 
+                (afternoon_start <= current_time <= afternoon_end)
+            )
+            
+            quote = Quote(symbol=symbol, source='VCI')
+            today = now.strftime('%Y-%m-%d')
+            
+            if is_trading_hours:
+                # TRADING HOURS: History + Current
+                st.info(f"🔥 Live Trading Mode - {symbol}")
+                
+                try:
+                    # 1. Get 1-minute history from 9:30
+                    history_data = quote.history(start=today, end=today, interval='1m')
+                    
+                    if not history_data.empty:
+                        # Filter from 9:30
+                        history_data.index = pd.to_datetime(history_data.index)
+                        morning_start_dt = now.replace(hour=9, minute=30, second=0, microsecond=0)
+                        filtered_data = history_data[history_data.index >= morning_start_dt]
+                        
+                        # Normalize column names
+                        if 'open' in filtered_data.columns:
+                            filtered_data.columns = [col.capitalize() for col in filtered_data.columns]
+                        
+                        # 2. Get current price
+                        try:
+                            current_data = quote.intraday(date=today, page_size=1)
+                            if not current_data.empty:
+                                # intraday() returns different structure: time, price, volume, match_type
+                                current_price = current_data.iloc[0]['price']
+                                current_time_str = current_data.iloc[0]['time']
+                                
+                                # Parse time properly
+                                if isinstance(current_time_str, str):
+                                    current_dt = pd.to_datetime(current_time_str)
+                                else:
+                                    current_dt = current_time_str
+                                
+                                if len(filtered_data) == 0 or current_dt > filtered_data.index[-1]:
+                                    # Create current point with proper OHLC structure
+                                    current_point = pd.DataFrame({
+                                        'Open': [current_price],
+                                        'High': [current_price], 
+                                        'Low': [current_price],
+                                        'Close': [current_price],
+                                        'Volume': [current_data.iloc[0].get('volume', 0)]
+                                    }, index=[current_dt])
+                                    
+                                    # Append to data
+                                    combined_data = pd.concat([filtered_data, current_point])
+                                    return combined_data
+                                
+                        except Exception:
+                            pass  # Use history only
+                            
+                        return filtered_data if not filtered_data.empty else None
+                        
+                except Exception as e:
+                    st.warning(f"Trading hours error: {e}")
+            
+            else:
+                # NON-TRADING: Full history
+                st.info(f"🌙 After Hours Mode - {symbol}")
+                
+                try:
+                    # Use 1-minute interval for non-trading
+                    history_data = quote.history(start=today, end=today, interval='1m')
+                    
+                    if not history_data.empty:
+                        # Ensure proper column names
+                        if 'open' in history_data.columns:
+                            history_data.columns = [col.capitalize() for col in history_data.columns]
+                        
+                        # Validate required columns exist
+                        required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+                        if all(col in history_data.columns for col in required_cols):
+                            return history_data
+                        else:
+                            st.warning(f"Data missing required columns: {[col for col in required_cols if col not in history_data.columns]}")
+                        
+                except Exception as e:
+                    st.warning(f"After hours error: {e}")
+            
+            # Fallback: Recent days
+            try:
+                from datetime import timedelta
+                yesterday = (now - timedelta(days=2)).strftime('%Y-%m-%d')
+                fallback_data = quote.history(start=yesterday, end=today, interval='1H')
+                
+                if not fallback_data.empty:
+                    # Ensure proper column names
+                    if 'open' in fallback_data.columns:
+                        fallback_data.columns = [col.capitalize() for col in fallback_data.columns]
+                    
+                    # Validate required columns
+                    required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+                    if all(col in fallback_data.columns for col in required_cols):
+                        st.info(f"📊 Using recent data (fallback)")
+                        return fallback_data
+                    
+            except Exception:
+                pass
+                
+            return None
+            
+        except Exception as e:
+            st.warning(f"Intraday data unavailable: {e}")
+            return None
 
 # Initialize session state
 def initialize_session_state():
@@ -457,18 +589,317 @@ def create_network_graph(relationships_data, center_symbol):
     """Create interactive network graph from Neo4j data - Legacy function"""
     return create_neo4j_style_graph(relationships_data, center_symbol)
 
-def create_mock_neo4j_data(symbol):
-    """Create mock Neo4j data for demonstration when database is offline"""
-    mock_relationships = [
-        {'relationship': 'SECTOR_OF', 'e': {'name': 'Technology', 'type': 'Sector'}},
-        {'relationship': 'COMPETES_WITH', 'e': {'name': 'VCB', 'type': 'Stock'}},
-        {'relationship': 'SUPPLIER_TO', 'e': {'name': f'{symbol}_Customer_1', 'type': 'Company'}},
-        {'relationship': 'PARTNER_WITH', 'e': {'name': f'{symbol}_Partner', 'type': 'Company'}},
-        {'relationship': 'LISTED_ON', 'e': {'name': 'HOSE', 'type': 'Exchange'}},
-        {'relationship': 'HAS_CEO', 'e': {'name': f'{symbol}_CEO', 'type': 'Person'}},
-    ]
+def create_ai_prediction(last_price, last_time, future_minutes=30):
+    """Create AI prediction as straight line to market close (15:00)"""
+    future_times = []
+    future_prices = []
     
-    return mock_relationships
+    now = datetime.now()
+    market_close = now.replace(hour=15, minute=0, second=0)
+    
+    # Only predict if market is still open
+    if now.hour >= 15:
+        return [], []
+    
+    # Create straight line from current price to predicted close price
+    # Simple prediction: slight upward trend toward close
+    predicted_close_price = last_price * (1 + random.uniform(-0.001, 0.002))  # -0.1% to +0.2%
+    
+    # Generate time points from last_time to market close
+    current_time = last_time
+    while current_time < market_close:
+        current_time += timedelta(minutes=1)
+        if current_time > market_close:
+            current_time = market_close
+            
+        # Calculate progress from current to close (linear interpolation)
+        total_minutes = (market_close - last_time).total_seconds() / 60
+        elapsed_minutes = (current_time - last_time).total_seconds() / 60
+        progress = elapsed_minutes / total_minutes if total_minutes > 0 else 1
+        
+        # Linear interpolation between current price and predicted close price
+        interpolated_price = last_price + (predicted_close_price - last_price) * progress
+        
+        future_times.append(current_time)
+        future_prices.append(interpolated_price)
+        
+        if current_time >= market_close:
+            break
+    
+    return future_times, future_prices
+
+def create_animated_price_display(symbol, current_price, percent_change):
+    """Create animated price display like MoMo/ZaloPay"""
+    import time
+    import random
+    
+    # Generate random fluctuations within current minute (±0.1%)
+    base_price = current_price
+    fluctuation_range = base_price * 0.001  # 0.1% fluctuation
+    
+    # Create container for animated price
+    price_container = st.empty()
+    
+    # Animate price for 3 seconds with fluctuations
+    for i in range(6):  # 6 frames, 0.5s each
+        if i < 5:  # First 5 frames: fluctuate
+            fluctuation = random.uniform(-fluctuation_range, fluctuation_range)
+            display_price = base_price + fluctuation
+            color = "🟢" if percent_change >= 0 else "🔴"
+            
+            with price_container.container():
+                st.markdown(f"""
+                <div style="
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    padding: 15px;
+                    border-radius: 10px;
+                    text-align: center;
+                    color: white;
+                    animation: pulse 0.5s ease-in-out;
+                ">
+                    <h3 style="margin: 0; font-size: 1.5em;">{color} {symbol}</h3>
+                    <h2 style="margin: 5px 0; font-size: 2em; font-weight: bold;">{display_price:,.0f} VNĐ</h2>
+                    <p style="margin: 0; font-size: 1.2em;">({percent_change:+.2f}%)</p>
+                </div>
+                """, unsafe_allow_html=True)
+        else:  # Last frame: settle to actual price
+            color = "🟢" if percent_change >= 0 else "🔴"
+            with price_container.container():
+                st.markdown(f"""
+                <div style="
+                    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+                    padding: 15px;
+                    border-radius: 10px;
+                    text-align: center;
+                    color: white;
+                    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+                ">
+                    <h3 style="margin: 0; font-size: 1.5em;">{color} {symbol}</h3>
+                    <h2 style="margin: 5px 0; font-size: 2em; font-weight: bold;">{current_price:,.0f} VNĐ</h2>
+                    <p style="margin: 0; font-size: 1.2em;">({percent_change:+.2f}%)</p>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        if i < 5:  # Don't sleep on last frame
+            time.sleep(0.5)
+    
+    return price_container
+
+def create_live_intraday_chart(symbol, analyzer):
+    """Create live intraday chart with future gap and AI prediction"""
+    try:
+        # Fetch intraday data
+        intraday_data = analyzer.fetch_intraday_data(symbol, '5m')
+        
+        if intraday_data is None or intraday_data.empty:
+            st.warning("⚠️ No intraday data available")
+            return None
+            
+        # Validate data structure
+        required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+        missing_cols = [col for col in required_cols if col not in intraday_data.columns]
+        
+        if missing_cols:
+            st.error(f"❌ Data missing columns: {missing_cols}")
+            st.error(f"📋 Available columns: {list(intraday_data.columns)}")
+            st.error(f"📊 Data sample: {intraday_data.head(1).to_dict() if not intraday_data.empty else 'Empty DataFrame'}")
+            return None
+            
+        # Create mock fallback data if needed
+        if intraday_data is None or intraday_data.empty:
+            st.info("🕰️ Creating demo data (market closed or data unavailable)")
+            
+            now = datetime.now()
+            start_time = now.replace(hour=9, minute=0, second=0, microsecond=0)
+            
+            times = []
+            prices = []
+            volumes = []
+            
+            base_price = 25000 + random.uniform(-1000, 1000)
+            current_price = base_price
+            
+            # Generate data every 5 minutes from 9:00 to current time
+            current_time = start_time
+            while current_time <= now and current_time.hour < 15:
+                times.append(current_time)
+                
+                # Random price movement
+                change = random.uniform(-200, 250)
+                current_price += change
+                prices.append(current_price)
+                volumes.append(random.randint(1000, 10000))
+                
+                current_time += timedelta(minutes=5)
+            
+            # Create DataFrame
+            intraday_data = pd.DataFrame({
+                'Open': prices,
+                'High': [p + random.uniform(0, 100) for p in prices],
+                'Low': [p - random.uniform(0, 100) for p in prices], 
+                'Close': prices,
+                'Volume': volumes
+            }, index=times)
+        
+        if intraday_data.empty:
+            st.warning("⚠️ No intraday data available")
+            return None
+            
+        # Get market hours and current time
+        now = datetime.now()
+        market_open = now.replace(hour=9, minute=0, second=0)
+        market_close = now.replace(hour=15, minute=0, second=0)
+        lunch_start = now.replace(hour=11, minute=30, second=0)
+        lunch_end = now.replace(hour=13, minute=0, second=0)
+        
+        # Create figure
+        fig = go.Figure()
+        
+        # Add candlestick chart
+        fig.add_trace(
+            go.Candlestick(
+                x=intraday_data.index,
+                open=intraday_data['Open'],
+                high=intraday_data['High'],
+                low=intraday_data['Low'],
+                close=intraday_data['Close'],
+                name=f'{symbol} Price',
+                increasing_line_color='#00ff88',
+                decreasing_line_color='#ff4444',
+                showlegend=False
+            )
+        )
+        
+        # Add AI prediction line (straight to market close)
+        # Get last price and time for prediction
+        last_price = intraday_data['Close'].iloc[-1] if not intraday_data.empty else 25000
+        last_time = intraday_data.index[-1] if not intraday_data.empty else now
+        
+        future_times, future_prices = create_ai_prediction(last_price, last_time, 30)
+        
+        if future_times:
+            fig.add_trace(
+                go.Scatter(
+                    x=future_times,
+                    y=future_prices,
+                    mode='lines',
+                    name='AI Prediction → 15:00',
+                    line=dict(color='#FF6B6B', width=2, dash='solid'),
+                    opacity=0.8
+                )
+            )
+        
+        # Add market hours markers using shapes instead of add_vline
+        # Market Open
+        fig.add_shape(
+            type="line",
+            x0=market_open, x1=market_open,
+            y0=0, y1=1,
+            yref="paper",
+            line=dict(color='green', width=2, dash='dash'),
+        )
+        fig.add_annotation(
+            x=market_open, y=0.9, yref="paper",
+            text="Market Open", showarrow=False,
+            font=dict(color='green')
+        )
+        
+        # Market Close
+        fig.add_shape(
+            type="line",
+            x0=market_close, x1=market_close,
+            y0=0, y1=1,
+            yref="paper",
+            line=dict(color='red', width=2, dash='dash'),
+        )
+        fig.add_annotation(
+            x=market_close, y=0.9, yref="paper",
+            text="Market Close", showarrow=False,
+            font=dict(color='red')
+        )
+        
+        # Lunch Break
+        fig.add_shape(
+            type="line",
+            x0=lunch_start, x1=lunch_start,
+            y0=0, y1=1,
+            yref="paper",
+            line=dict(color='orange', width=1, dash='dot'),
+        )
+        fig.add_annotation(
+            x=lunch_start, y=0.1, yref="paper",
+            text="Lunch Break", showarrow=False,
+            font=dict(color='orange')
+        )
+        
+        # Lunch End
+        fig.add_shape(
+            type="line",
+            x0=lunch_end, x1=lunch_end,
+            y0=0, y1=1,
+            yref="paper",
+            line=dict(color='orange', width=1, dash='dot'),
+        )
+        fig.add_annotation(
+            x=lunch_end, y=0.1, yref="paper",
+            text="Lunch End", showarrow=False,
+            font=dict(color='orange')
+        )
+        
+        # Set x-axis range to include future gap
+        end_time = market_close + timedelta(minutes=30)  # Extra gap for future
+        start_time = market_open - timedelta(minutes=30)  # Pre-market gap
+        
+        fig.update_layout(
+            title=dict(
+                text=f"📊 {symbol} Live Intraday Chart - {now.strftime('%Y-%m-%d')}",
+                font=dict(size=16)
+            ),
+            xaxis=dict(
+                title="Time",
+                range=[start_time, end_time],
+                type='date',
+                tickformat='%H:%M',
+                showgrid=True,
+                gridcolor='rgba(128,128,128,0.2)'
+            ),
+            yaxis=dict(
+                title="Price (VNĐ)",
+                showgrid=True,
+                gridcolor='rgba(128,128,128,0.2)'
+            ),
+            plot_bgcolor='#1E1E1E',
+            paper_bgcolor='#2E2E2E',
+            height=500,
+            showlegend=True,
+            legend=dict(
+                x=0.02, y=0.98,
+                bgcolor='rgba(255,255,255,0.1)',
+                bordercolor='#666',
+                borderwidth=1
+            )
+        )
+        
+        # Add current time marker
+        fig.add_shape(
+            type="line",
+            x0=now, x1=now,
+            y0=0, y1=1,
+            yref="paper",
+            line=dict(color='yellow', width=2),
+        )
+        fig.add_annotation(
+            x=now, y=0.95, yref="paper",
+            text="Now", showarrow=False,
+            font=dict(color='yellow')
+        )
+        
+        return fig
+        
+    except Exception as e:
+        st.error(f"Error creating live chart: {e}")
+        return None
+
 
 def load_news_data(symbol):
     """Load news data from CSV files"""
@@ -817,7 +1248,17 @@ def main():
     
     # Calculate technical indicators
     with st.spinner("⚙️ Calculating technical indicators..."):
-        data = analyzer.calculate_technical_indicators(data)
+        data_with_indicators = analyzer.calculate_technical_indicators(data)
+        # Ensure data is still valid after calculating indicators
+        if data_with_indicators is None or data_with_indicators.empty:
+            st.warning("⚠️ Could not calculate technical indicators, using original data")
+            data_with_indicators = data
+        data = data_with_indicators
+    
+    # Verify data is still valid
+    if data is None or data.empty:
+        st.error(f"❌ Data processing failed for {symbol}")
+        return
     
     # Main dashboard header
     st.markdown("---")
@@ -905,33 +1346,63 @@ def main():
     if show_kafka:
         st.subheader("📡 Kafka Real-time Data Stream")
         
-        col1, col2 = st.columns(2)
+        # Create tabs for Kafka section
+        kafka_tab1, kafka_tab2 = st.tabs(["📊 Live Feed", "📈 Live Chart"])
         
-        with col1:
-            st.write("**📊 Live Data Feed:**")
+        with kafka_tab1:
+            st.write("### 📊 Live Data Feed (Animated)")
+            
             if st.session_state.kafka_data:
-                for stock_symbol, live_data in st.session_state.kafka_data.items():
+                # Create animated displays for each stock
+                cols = st.columns(len(st.session_state.kafka_data))
+                
+                for idx, (stock_symbol, live_data) in enumerate(st.session_state.kafka_data.items()):
                     timestamp = live_data.get('timestamp', 'N/A')
                     price = live_data.get('price', 0)
                     change = live_data.get('percent_change', 0)
                     
-                    color = "🟢" if change >= 0 else "🔴"
-                    st.write(f"{color} **{stock_symbol}**: {price:,.0f} VNĐ ({change:+.2f}%)")
+                    with cols[idx % len(cols)]:
+                        color = "🟢" if change >= 0 else "🔴"
+                        
+                        # Clean animated price display
+                        st.markdown(f"""
+                        <div style="
+                            background: {'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)' if change >= 0 else 'linear-gradient(135deg, #ff416c 0%, #ff4757 100%)'};
+                            padding: 12px;
+                            border-radius: 8px;
+                            text-align: center;
+                            color: white;
+                            margin: 5px 0;
+                            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                        ">
+                            <div style="font-size: 0.9em; font-weight: bold;">{color} {stock_symbol}</div>
+                            <div style="font-size: 1.4em; font-weight: bold; margin: 3px 0;">{price:,.0f}</div>
+                            <div style="font-size: 0.8em;">({change:+.2f}%)</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                
+                # Status info below
+                st.markdown("---")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("📊 Active Symbols", len(st.session_state.kafka_data))
+                with col2:
+                    st.metric("⏱️ Status", "🟢 Live" if st.session_state.consumer_running else "🔴 Offline")
+                with col3:
+                    st.metric("🕐 Updated", datetime.now().strftime('%H:%M:%S'))
+                    
             else:
                 st.info("🟡 Waiting for Kafka data...")
-                st.write("Make sure Kafka broker is running on localhost:9092")
-                st.write("Topic: 'stock-prices'")
-        
-        with col2:
-            st.write("**⏱️ Kafka Status:**")
-            st.write(f"Active symbols: {len(st.session_state.kafka_data)}")
-            st.write(f"Consumer running: {'✅' if st.session_state.consumer_running else '❌'}")
-            st.write(f"Last update: {datetime.now().strftime('%H:%M:%S')}")
-            
-            # Manual test button
-            if st.button("🔄 Test Kafka Connection", key="test_kafka"):
+                st.markdown("""
+                **Setup Instructions:**
+                1. Start Kafka: `kafka-server-start.sh config/server.properties`
+                2. Start Producer: `python kafka_producer.py`
+                3. Data will stream on topic: `stock-prices`
+                """)
+                
+            # Clean test button
+            if st.button("🔄 Test Kafka Connection", key="test_kafka", type="secondary"):
                 try:
-                    # Try to create a simple consumer to test connection
                     test_consumer = KafkaConsumer(
                         'stock-prices',
                         bootstrap_servers='localhost:9092',
@@ -940,7 +1411,47 @@ def main():
                     test_consumer.close()
                     st.success("✅ Kafka connection successful!")
                 except Exception as e:
-                    st.error(f"❌ Kafka connection failed: {e}")
+                    st.error(f"❌ Connection failed: {str(e)[:50]}...")  # Clean error message
+        
+        with kafka_tab2:
+            # Live intraday chart
+            st.write("### 📈 Live Intraday Chart")
+            
+            # Chart controls
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                interval = st.selectbox(
+                    "Interval:",
+                    options=['1m', '5m', '15m', '30m', '1H'],
+                    index=1,
+                    key="intraday_interval"
+                )
+            with col2:
+                show_prediction = st.checkbox("🤖 AI Prediction", value=True, key="show_ai_prediction")
+            with col3:
+                auto_refresh = st.checkbox("🔄 Auto Refresh", value=True, key="auto_refresh_chart")
+            
+            # Create and display live chart
+            with st.spinner("🕰️ Loading live intraday data..."):
+                live_chart = create_live_intraday_chart(symbol, analyzer)
+                
+                if live_chart:
+                    st.plotly_chart(live_chart, width='content')
+                    
+                    # Chart info
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("�️ Market Status", "Open" if 9 <= datetime.now().hour < 15 else "Closed")
+                    with col2:
+                        st.metric("⏰ Current Time", datetime.now().strftime('%H:%M:%S'))
+                    with col3:
+                        st.metric("🎯 Interval", interval)
+                    
+                    # Chart features info
+                    st.info("💡 **Chart Features**: 🕯️ Candlestick patterns, ⏰ Market hours markers, 🤖 AI prediction line (red dotted), 📅 Future gap for price projection")
+                    
+                else:
+                    st.warning("⚠️ Unable to load live chart. Try again during market hours (9:00-15:00)")
         
         st.markdown("---")
     
@@ -1042,8 +1553,10 @@ def main():
                 st.write("News data will be loaded from CSV files when available.")
     
     # Graph Tab (if enabled)
-    graph_tab_idx = 4 if show_news else 3
-    if show_graph and len(tabs) > graph_tab_idx:
+    if show_graph:
+        # Calculate correct tab index
+        graph_tab_idx = len(tab_names) - 1  # Graph is always the last tab when enabled
+        
         with tabs[graph_tab_idx]:
             st.write("### 🔗 Knowledge Graph Network")
             
@@ -1052,118 +1565,119 @@ def main():
             with col2:
                 demo_mode = st.toggle("🎯 Demo Mode", value=True, help="Show mock data when Neo4j is offline")
             
-            neo4j_conn = Neo4jConnection()
-            relationships_data = []
-            
-            if neo4j_conn.driver:
-                # Real Neo4j data - use more generic query
-                query = """
-                MATCH (n:Stock)-[r]-(e)
-                RETURN n, type(r) as relationship, e
-                LIMIT 20
-                """
+            try:
+                neo4j_conn = Neo4jConnection()
+                relationships_data = []
                 
-                results = neo4j_conn.query(query, {"symbol": symbol})
-                
-                if results:
-                    relationships_data = results
-                    st.success(f"🟢 Found {len(results)} relationships from Neo4j")
+                if neo4j_conn.driver:
+                    # Real Neo4j data - use more generic query
+                    query = """
+                    MATCH (n:Stock)-[r]-(e)
+                    RETURN n, type(r) as relationship, e
+                    LIMIT 25
+                    """
+                    
+                    results = neo4j_conn.query(query, {"symbol": symbol})
+                    
+                    if results:
+                        relationships_data = results
+                        st.success(f"🟢 Found {len(results)} relationships from Neo4j")
+                    else:
+                        st.info("🔗 No relationships found in Neo4j database")
+                        if demo_mode:
+                            relationships_data = []
+                            st.info("📊 No demo data available")
+                            
                 else:
-                    st.info("🔗 No relationships found in Neo4j database")
+                    st.warning("⚠️ Neo4j connection not available")
                     if demo_mode:
-                        relationships_data = create_mock_neo4j_data(symbol)
-                        st.info("📊 Showing demo data instead")
-                        
-            else:
-                st.warning("⚠️ Neo4j connection not available")
-                if demo_mode:
-                    relationships_data = create_mock_neo4j_data(symbol)
-                    st.info("📊 Showing demo network graph")
-                else:
-                    st.info("Enable Demo Mode or start Neo4j database")
-                    st.code("""
+                        relationships_data = []
+                        st.info("📊 No demo data available")
+                    else:
+                        st.info("Enable Demo Mode or start Neo4j database")
+                        st.code("""
 # To start Neo4j:
 docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/password123 neo4j
-                    """)
-            
-            # Create and display Neo4j-style network graph
-            if relationships_data:
-                try:
-                    network_fig, node_types, edge_count = create_neo4j_style_graph(relationships_data, symbol)
-                    
-                    if network_fig:
-                        # Graph statistics
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("📊 Total Nodes", len(relationships_data) + 1)
-                        with col2:
-                            st.metric("🔗 Relationships", edge_count)
-                        with col3:
-                            st.metric("🏷️ Node Types", len(node_types))
+                        """)
+                
+                # Create and display Neo4j-style network graph
+                if relationships_data:
+                    try:
+                        network_fig, node_types, edge_count = create_neo4j_style_graph(relationships_data, symbol)
                         
-                        # Main graph
-                        st.plotly_chart(network_fig, use_container_width=True)
-                        
-                        # Interactive controls and details
-                        col1, col2 = st.columns([2, 1])
-                        
-                        with col1:
-                            with st.expander(f"📋 Relationship Details ({len(relationships_data)} total)"):
-                                for i, record in enumerate(relationships_data[:15], 1):
-                                    relationship = record.get('relationship', 'RELATED')
-                                    entity = record.get('e', {})
-                                    entity_name = str(entity.get('name', entity.get('symbol', entity.get('id', 'Unknown'))))
-                                    entity_type = str(entity.get('type', 'Unknown'))
-                                    
-                                    # Color-coded relationship display
-                                    st.markdown(f"**{i}.** `{symbol}` ➜ **{relationship}** ➜ `{entity_name}` *({entity_type})*")
-                                    
-                                if len(relationships_data) > 15:
-                                    st.write(f"... and {len(relationships_data) - 15} more relationships")
-                        
-                        with col2:
-                            st.write("**🎨 Legend:**")
-                            legend_items = {
-                                "📈 Stock": "#FF6B6B",
-                                "👥 Person": "#4ECDC4", 
-                                "🏢 Company": "#45B7D1",
-                                "📊 Sector": "#96CEB4",
-                                "🏛️ Exchange": "#FECA57",
-                                "❓ Other": "#A8A8A8"
-                            }
+                        if network_fig:
+                            # Graph statistics
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("📊 Total Nodes", len(relationships_data) + 1)
+                            with col2:
+                                st.metric("🔗 Relationships", edge_count)
+                            with col3:
+                                st.metric("🏷️ Node Types", len(node_types))
                             
-                            for item, color in legend_items.items():
-                                st.markdown(f"<span style='color:{color}'>●</span> {item}", unsafe_allow_html=True)
+                            # Main graph
+                            st.plotly_chart(network_fig, width='stretch')
                             
-                            # Query info
-                            st.markdown("---")
-                            st.write("**🔍 Neo4j Query:**")
-                            st.code("""
+                            # Interactive controls and details
+                            col1, col2 = st.columns([2, 1])
+                            
+                            with col1:
+                                with st.expander(f"📋 Relationship Details ({len(relationships_data)} total)"):
+                                    for i, record in enumerate(relationships_data[:15], 1):
+                                        relationship = record.get('relationship', 'RELATED')
+                                        entity = record.get('e', {})
+                                        entity_name = str(entity.get('name', entity.get('symbol', entity.get('id', 'Unknown'))))
+                                        entity_type = str(entity.get('type', 'Unknown'))
+                                        
+                                        # Color-coded relationship display
+                                        st.markdown(f"**{i}.** `{symbol}` ➜ **{relationship}** ➜ `{entity_name}` *({entity_type})*")
+                                        
+                                    if len(relationships_data) > 15:
+                                        st.write(f"... and {len(relationships_data) - 15} more relationships")
+                            
+                            with col2:
+                                st.write("**🎨 Legend:**")
+                                legend_items = {
+                                    "📈 Stock": "#FF6B6B",
+                                    "👥 Person": "#4ECDC4", 
+                                    "🏢 Company": "#45B7D1",
+                                    "📊 Sector": "#96CEB4",
+                                    "🏛️ Exchange": "#FECA57",
+                                    "❓ Other": "#A8A8A8"
+                                }
+                                
+                                for item, color in legend_items.items():
+                                    st.markdown(f"<span style='color:{color}'>●</span> {item}", unsafe_allow_html=True)
+                                
+                                # Query info
+                                st.markdown("---")
+                                st.write("**🔍 Neo4j Query:**")
+                                st.code("""
 MATCH (n:Stock)-[r]-(e)
 RETURN n, type(r) as relationship, e
-LIMIT 20
-                            """, language="cypher")
+LIMIT 25
+                                """, language="cypher")
+                                
+                                if node_types:
+                                    st.write("**📊 Node Distribution:**")
+                                    for node_type, count in node_types.items():
+                                        st.write(f"• {node_type.title()}: {count}")
+                        else:
+                            st.error("❌ Failed to create network graph")
                             
-                            if node_types:
-                                st.write("**📊 Node Distribution:**")
-                                for node_type, count in node_types.items():
-                                    st.write(f"• {node_type.title()}: {count}")
-                    else:
-                        st.error("❌ Failed to create network graph")
-                        
-                except Exception as e:
-                    st.error(f"Error creating graph: {e}")
-                    st.write("**Fallback - Text Display:**")
-                    for i, record in enumerate(relationships_data[:5], 1):
-                        relationship = record.get('relationship', 'RELATED')
-                        entity = record.get('e', {})
-                        st.write(f"**{i}.** {symbol} **{relationship}** {entity}")
-            
-            neo4j_conn.close()
-    
-    # Auto-refresh every 30 seconds for real-time data
-    time.sleep(30)
-    st.rerun()
+                    except Exception as e:
+                        st.error(f"Error creating graph: {e}")
+                        st.write("**Fallback - Text Display:**")
+                        for i, record in enumerate(relationships_data[:5], 1):
+                            relationship = record.get('relationship', 'RELATED')
+                            entity = record.get('e', {})
+                            st.write(f"**{i}.** {symbol} **{relationship}** {entity}")
+                
+                neo4j_conn.close()
+                
+            except Exception as e:
+                st.error(f"❌ Graph section error: {e}")
+                st.info("Graph feature temporarily unavailable")
 
 if __name__ == "__main__":
     main()
