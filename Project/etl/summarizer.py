@@ -44,18 +44,19 @@ def run_summarization(batch_size=100):
     count = 0
     for news in cursor:
         postID = news.get("postID")
-        content = news.get("title", "")
-        content += "\n" + news.get("description", "")
+        stockCodes = news.get("taggedSymbols", [])
+        title = news.get("title", "")
+        description = news.get("description", "")
         
         date = news.get('date', None)
         
-        summary = summarize_text(content)
         
         doc = {
             "postID": postID,
-            "summary": summary,
-            "date": date,
-            "originalContent": content 
+            "stockCodes": stockCodes,
+            "title": title,
+            "description": description,
+            "date": date
         }
         
         operations.append(UpdateOne({"postID": postID}, {"$set": doc}, upsert=True))

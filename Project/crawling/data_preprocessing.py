@@ -150,7 +150,7 @@ def preprocess_news_df(df: pd.DataFrame):
     df['content'] = df.apply(combine_content, axis=1)
     df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.date.astype(str)
     
-    processed_df = df[['postID' ,'date', 'content']]
+    processed_df = df[['postID' ,'date', 'content', 'taggedSymbols']]
     
     # -----------------------------
     # Lưu news vào MongoDB
@@ -168,6 +168,7 @@ def preprocess_news_df(df: pd.DataFrame):
             "description": row.get("description"),
             "originalContent": row.get("originalContent"),
             "sentiment": row.get("sentiment"),
+            "taggedSymbols": row.get("taggedSymbols", []),
             "totalLikes": row.get("totalLikes", 0),
             "totalReplies": row.get("totalReplies", 0),
             "totalShares": row.get("totalShares", 0)
@@ -185,7 +186,7 @@ def preprocess_news_df(df: pd.DataFrame):
         doc = row.to_dict()
         try:
             processed_news_col.update_one(
-                {"postID": doc['postID'],"date": doc["date"], "content": doc["content"]},
+                {"postID": doc['postID'],"date": doc["date"], "content": doc["content"], "stockCodes": doc["taggedSymbols"]},
                 {"$set": doc},
                 upsert=True
             )
