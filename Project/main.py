@@ -126,4 +126,4 @@ def run_full_pipeline(target_date_input):
 
 if __name__ == "__main__":
     # Bạn có thể truyền chuỗi YYYY-MM-DD vào đây thoải mái
-    run_full_pipeline("2025-11-19")
+    run_full_pipeline("2025-11-20")

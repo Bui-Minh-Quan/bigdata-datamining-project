@@ -41,7 +41,7 @@ class TRRMemoryAttention:
         
         query = """ 
             MATCH (s)-[r:AFFECTS]->(t)
-            WHERE r.date >= $start_date AND r.date < $target_date 
+            WHERE r.date >= $start_date AND r.date <= $target_date 
             RETURN 
                 COALESCE(s.name, s.title, s.id) as source,
                 COALESCE(t.name, t.title, t.id) as target, 
