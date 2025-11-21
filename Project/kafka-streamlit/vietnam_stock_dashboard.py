@@ -15,9 +15,14 @@ import queue
 import time
 import traceback
 import random
+import logging
 from kafka import KafkaConsumer
 from neo4j import GraphDatabase
 from vnstock import Quote
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Page configuration - disable animation
 st.set_page_config(
@@ -59,17 +64,65 @@ class VietnamStockAnalyzer:
         self.vnstock_cache = {}
         self.kafka_data = {}
         self.last_update = {}
+    
+    def get_data_from_kafka(self, symbol, data_type='historical'):
+        """
+        Lấy data từ Kafka session state
+        
+        Args:
+            symbol: Stock symbol
+            data_type: 'historical', 'intraday', or 'prices'
+            
+        Returns:
+            DataFrame or dict
+        """
+        try:
+            if data_type == 'historical':
+                kafka_data = st.session_state.kafka_historical.get(symbol)
+                if kafka_data and 'data' in kafka_data:
+                    df = pd.DataFrame(kafka_data['data'])
+                    if 'Date' in df.columns:
+                        df['Date'] = pd.to_datetime(df['Date'])
+                        df.set_index('Date', inplace=True)
+                    return df
+                    
+            elif data_type == 'intraday':
+                kafka_data = st.session_state.kafka_intraday.get(symbol)
+                if kafka_data and 'data' in kafka_data:
+                    df = pd.DataFrame(kafka_data['data'])
+                    if 'Date' in df.columns:
+                        df['Date'] = pd.to_datetime(df['Date'])
+                        df.set_index('Date', inplace=True)
+                    elif 'time' in df.columns:
+                        df['time'] = pd.to_datetime(df['time'])
+                        df.set_index('time', inplace=True)
+                    return df
+                    
+            elif data_type == 'prices':
+                return st.session_state.kafka_data.get(symbol)
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting Kafka data: {e}")
+            return None
         
     def fetch_vnstock_data(self, symbol, period_days=30):
-        """Fetch Vietnam stock data using vnstock"""
+        """
+        Fallback: Fetch Vietnam stock data using vnstock (chỉ khi Kafka không có data)
+        """
+        # Ưu tiên lấy từ Kafka
+        kafka_df = self.get_data_from_kafka(symbol, 'historical')
+        if kafka_df is not None and not kafka_df.empty:
+            return kafka_df
+        
+        # Fallback: Gọi VNStock API
         try:
             quote = Quote(symbol=symbol, source='VCI')
             
-            # Calculate date range
             end_date = datetime.now()
             start_date = end_date - timedelta(days=period_days)
             
-            # Get historical data
             data = quote.history(
                 start=start_date.strftime('%Y-%m-%d'), 
                 end=end_date.strftime('%Y-%m-%d'), 
@@ -79,25 +132,22 @@ class VietnamStockAnalyzer:
             if data.empty:
                 return None
                 
-            # Rename columns to match expected format
             data.columns = [col.title() for col in data.columns]
             data = data.rename(columns={'Time': 'Date'})
             
             if 'Date' in data.columns:
                 data.set_index('Date', inplace=True)
             
-            # Get real-time data for today
             try:
                 today = datetime.now().strftime('%Y-%m-%d')
                 realtime_data = quote.history(start=today, end=today, interval="1m")
                 
                 if not realtime_data.empty:
                     latest_price = realtime_data.iloc[-1]['close']
-                    # Update today's close price if exists
                     if len(data) > 0:
                         data.iloc[-1, data.columns.get_loc('Close')] = latest_price
             except Exception:
-                pass  # Use historical data if real-time fails
+                pass
                 
             return data
             
@@ -161,9 +211,14 @@ class VietnamStockAnalyzer:
     def fetch_intraday_data(self, symbol, interval='1m'):
         """
         Optimized intraday data for live chart
-        - Trading hours: 9:30→now (1m) + current intraday price  
-        - Non-trading: full history (5m)
+        Ưu tiên lấy từ Kafka, fallback sang VNStock API
         """
+        # Ưu tiên lấy từ Kafka
+        kafka_df = self.get_data_from_kafka(symbol, 'intraday')
+        if kafka_df is not None and not kafka_df.empty:
+            return kafka_df
+        
+        # Fallback: Gọi VNStock API
         from datetime import datetime, time
         import pandas as pd
         
@@ -172,7 +227,6 @@ class VietnamStockAnalyzer:
             current_time = now.time()
             is_weekday = now.weekday() < 5
             
-            # Trading hours: 9:30-11:30, 13:00-15:00
             morning_start = time(9, 30)
             morning_end = time(11, 30)
             afternoon_start = time(13, 0)
@@ -187,49 +241,38 @@ class VietnamStockAnalyzer:
             today = now.strftime('%Y-%m-%d')
             
             if is_trading_hours:
-                # TRADING HOURS: History + Current
                 st.info(f"🔥 Live Trading Mode - {symbol}")
                 
                 try:
-                    # 1. Get 1-minute history from 9:30
                     history_data = quote.history(start=today, end=today, interval='1m')
                     
                     if not history_data.empty:
-                        # Filter from 9:30
                         history_data.index = pd.to_datetime(history_data.index)
-                        # Ensure timezone-naive for consistent comparison
                         if hasattr(history_data.index, 'tz') and history_data.index.tz is not None:
                             history_data.index = history_data.index.tz_localize(None)
                         
                         morning_start_dt = now.replace(hour=9, minute=30, second=0, microsecond=0)
                         filtered_data = history_data[history_data.index >= morning_start_dt]
                         
-                        # Normalize column names
                         if 'open' in filtered_data.columns:
                             filtered_data.columns = [col.capitalize() for col in filtered_data.columns]
                         
-                        # 2. Get current price
                         try:
                             current_data = quote.intraday(date=today, page_size=1)
                             if not current_data.empty:
-                                # intraday() returns different structure: time, price, volume, match_type
                                 current_price = current_data.iloc[0]['price']
                                 current_time_str = current_data.iloc[0]['time']
                                 
-                                # Parse time properly and remove timezone for consistent comparison
                                 if isinstance(current_time_str, str):
                                     current_dt = pd.to_datetime(current_time_str)
                                 else:
                                     current_dt = current_time_str
                                 
-                                # Remove timezone info to make it consistent
                                 if current_dt.tz is not None:
                                     current_dt = current_dt.tz_localize(None)
                                 
-                                # Compare with timezone-naive index
                                 last_time = filtered_data.index[-1] if len(filtered_data) > 0 else None
                                 if len(filtered_data) == 0 or (last_time is not None and current_dt > last_time):
-                                    # Create current point with proper OHLC structure
                                     current_point = pd.DataFrame({
                                         'Open': [current_price],
                                         'High': [current_price], 
@@ -238,12 +281,11 @@ class VietnamStockAnalyzer:
                                         'Volume': [current_data.iloc[0].get('volume', 0)]
                                     }, index=[current_dt])
                                     
-                                    # Append to data
                                     combined_data = pd.concat([filtered_data, current_point])
                                     return combined_data
                                 
                         except Exception:
-                            pass  # Use history only
+                            pass
                             
                         return filtered_data if not filtered_data.empty else None
                         
@@ -251,24 +293,19 @@ class VietnamStockAnalyzer:
                     st.warning(f"Trading hours error: {e}")
             
             else:
-                # NON-TRADING: Full history
                 st.info(f"🌙 After Hours Mode - {symbol}")
                 
                 try:
-                    # Use 1-minute interval for non-trading
                     history_data = quote.history(start=today, end=today, interval='1m')
                     
                     if not history_data.empty:
-                        # Ensure proper column names
                         if 'open' in history_data.columns:
                             history_data.columns = [col.capitalize() for col in history_data.columns]
                         
-                        # Fix timezone issues
                         history_data.index = pd.to_datetime(history_data.index)
                         if hasattr(history_data.index, 'tz') and history_data.index.tz is not None:
                             history_data.index = history_data.index.tz_localize(None)
                         
-                        # Validate required columns exist
                         required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
                         if all(col in history_data.columns for col in required_cols):
                             return history_data
@@ -278,23 +315,19 @@ class VietnamStockAnalyzer:
                 except Exception as e:
                     st.warning(f"After hours error: {e}")
             
-            # Fallback: Recent days
             try:
                 from datetime import timedelta
                 yesterday = (now - timedelta(days=2)).strftime('%Y-%m-%d')
                 fallback_data = quote.history(start=yesterday, end=today, interval='1H')
                 
                 if not fallback_data.empty:
-                    # Ensure proper column names
                     if 'open' in fallback_data.columns:
                         fallback_data.columns = [col.capitalize() for col in fallback_data.columns]
                     
-                    # Fix timezone issues
                     fallback_data.index = pd.to_datetime(fallback_data.index)
                     if hasattr(fallback_data.index, 'tz') and fallback_data.index.tz is not None:
                         fallback_data.index = fallback_data.index.tz_localize(None)
                     
-                    # Validate required columns
                     required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
                     if all(col in fallback_data.columns for col in required_cols):
                         st.info(f"📊 Using recent data (fallback)")
@@ -313,41 +346,136 @@ class VietnamStockAnalyzer:
 def initialize_session_state():
     if 'kafka_data' not in st.session_state:
         st.session_state.kafka_data = {}
+    if 'kafka_historical' not in st.session_state:
+        st.session_state.kafka_historical = {}
+    if 'kafka_intraday' not in st.session_state:
+        st.session_state.kafka_intraday = {}
     if 'news_data' not in st.session_state:
         st.session_state.news_data = []
     if 'neo4j_data' not in st.session_state:
         st.session_state.neo4j_data = {}
-    if 'data_queue' not in st.session_state:
-        st.session_state.data_queue = queue.Queue()
+    if 'data_queue_prices' not in st.session_state:
+        st.session_state.data_queue_prices = queue.Queue()
+    if 'data_queue_historical' not in st.session_state:
+        st.session_state.data_queue_historical = queue.Queue()
+    if 'data_queue_intraday' not in st.session_state:
+        st.session_state.data_queue_intraday = queue.Queue()
     if 'consumer_running' not in st.session_state:
         st.session_state.consumer_running = False
+    if 'consumer_threads' not in st.session_state:
+        st.session_state.consumer_threads = []
 
 initialize_session_state()
 
-# Kafka Consumer
-def kafka_consumer_thread(data_queue, topic='stock-prices'):
+# Kafka Consumers - Multi-topic
+def kafka_consumer_prices_thread(data_queue):
+    """Consumer for real-time prices"""
     try:
         consumer = KafkaConsumer(
-            topic,
+            'stock-prices',
             bootstrap_servers='localhost:9092',
             value_deserializer=lambda m: json.loads(m.decode('utf-8')),
-            auto_offset_reset='latest',
-            consumer_timeout_ms=1000
+            auto_offset_reset='earliest',
+            enable_auto_commit=True,
+            group_id='dashboard-prices-group',
+            consumer_timeout_ms=5000
         )
         
-        for message in consumer:
-            data_queue.put(message.value)
-    except Exception:
-        pass  # Silent fail if Kafka not available
+        logger.info("✅ Prices consumer started")
+        
+        while True:
+            for message in consumer:
+                data_queue.put(message.value)
+                logger.info(f"📡 Price: {message.value.get('symbol', 'unknown')}")
+    except Exception as e:
+        logger.error(f"❌ Prices consumer error: {e}")
+
+def kafka_consumer_historical_thread(data_queue):
+    """Consumer for historical data"""
+    try:
+        consumer = KafkaConsumer(
+            'stock-historical',
+            bootstrap_servers='localhost:9092',
+            value_deserializer=lambda m: json.loads(m.decode('utf-8')),
+            auto_offset_reset='earliest',
+            enable_auto_commit=True,
+            group_id='dashboard-historical-group',
+            consumer_timeout_ms=5000
+        )
+        
+        logger.info("✅ Historical consumer started")
+        
+        while True:
+            for message in consumer:
+                data_queue.put(message.value)
+                logger.info(f"📊 Historical: {message.value.get('symbol', 'unknown')}")
+    except Exception as e:
+        logger.error(f"❌ Historical consumer error: {e}")
+
+def kafka_consumer_intraday_thread(data_queue):
+    """Consumer for intraday data"""
+    try:
+        consumer = KafkaConsumer(
+            'stock-intraday',
+            bootstrap_servers='localhost:9092',
+            value_deserializer=lambda m: json.loads(m.decode('utf-8')),
+            auto_offset_reset='earliest',
+            enable_auto_commit=True,
+            group_id='dashboard-intraday-group',
+            consumer_timeout_ms=5000
+        )
+        
+        logger.info("✅ Intraday consumer started")
+        
+        while True:
+            for message in consumer:
+                data_queue.put(message.value)
+                logger.info(f"⏱️ Intraday: {message.value.get('symbol', 'unknown')}")
+    except Exception as e:
+        logger.error(f"❌ Intraday consumer error: {e}")
 
 def process_kafka_data():
-    while not st.session_state.data_queue.empty():
+    """Process data from all Kafka queues"""
+    # Process prices
+    while not st.session_state.data_queue_prices.empty():
         try:
-            data = st.session_state.data_queue.get_nowait()
+            data = st.session_state.data_queue_prices.get_nowait()
             symbol = data.get('symbol', '')
             if symbol:
                 st.session_state.kafka_data[symbol] = data
+                logger.debug(f"✅ Processed price for {symbol}")
         except queue.Empty:
+            break
+        except Exception as e:
+            logger.error(f"❌ Error processing price data: {e}")
+            break
+    
+    # Process historical
+    while not st.session_state.data_queue_historical.empty():
+        try:
+            data = st.session_state.data_queue_historical.get_nowait()
+            symbol = data.get('symbol', '')
+            if symbol:
+                st.session_state.kafka_historical[symbol] = data
+                logger.debug(f"✅ Processed historical for {symbol}")
+        except queue.Empty:
+            break
+        except Exception as e:
+            logger.error(f"❌ Error processing historical data: {e}")
+            break
+    
+    # Process intraday
+    while not st.session_state.data_queue_intraday.empty():
+        try:
+            data = st.session_state.data_queue_intraday.get_nowait()
+            symbol = data.get('symbol', '')
+            if symbol:
+                st.session_state.kafka_intraday[symbol] = data
+                logger.debug(f"✅ Processed intraday for {symbol}")
+        except queue.Empty:
+            break
+        except Exception as e:
+            logger.error(f"❌ Error processing intraday data: {e}")
             break
 
 # Import for network graph
@@ -712,29 +840,47 @@ def create_animated_price_display(symbol, current_price, percent_change):
 def create_live_intraday_chart(symbol, analyzer):
     """
     Create professional live candlestick chart with volume histogram
-    Features: OHLC candlesticks, volume histogram, detailed tooltips, market session markers
+    Ưu tiên lấy data từ Kafka, fallback sang VNStock API
     """
     try:
-        from vnstock import Quote
+        # Ưu tiên lấy từ Kafka intraday data
+        intraday_data = analyzer.get_data_from_kafka(symbol, 'intraday')
         
-        # Fetch today's full intraday data using vnstock
-        quote = Quote(symbol=symbol, source='VCI')
-        today = datetime.now().strftime('%Y-%m-%d')
-        
-        # Get intraday data with 1-minute interval
-        intraday_data = quote.history(start=today, end=today, interval='1m')
-        
-        if intraday_data.empty:
-            st.warning(f"⚠️ No intraday data available for {symbol}")
-            return None
-        
-        # Convert to datetime and filter for today only
-        intraday_data['datetime'] = pd.to_datetime(intraday_data['time'])
-        
-        # Ensure timezone-naive for consistent comparison
-        if hasattr(intraday_data['datetime'].iloc[0], 'tz') and intraday_data['datetime'].iloc[0].tz is not None:
-            intraday_data['datetime'] = intraday_data['datetime'].dt.tz_localize(None)
+        if intraday_data is None or intraday_data.empty:
+            # Fallback: Fetch từ VNStock
+            from vnstock import Quote
             
+            quote = Quote(symbol=symbol, source='VCI')
+            today = datetime.now().strftime('%Y-%m-%d')
+            
+            intraday_data = quote.history(start=today, end=today, interval='1m')
+            
+            if intraday_data.empty:
+                st.warning(f"⚠️ No intraday data available for {symbol}")
+                return None
+            
+            # Convert to datetime
+            intraday_data['datetime'] = pd.to_datetime(intraday_data['time'])
+            
+            if hasattr(intraday_data['datetime'].iloc[0], 'tz') and intraday_data['datetime'].iloc[0].tz is not None:
+                intraday_data['datetime'] = intraday_data['datetime'].dt.tz_localize(None)
+        
+        else:
+            # Data từ Kafka - normalize
+            if not intraday_data.index.name:
+                intraday_data['datetime'] = pd.to_datetime(intraday_data.index)
+            else:
+                intraday_data['datetime'] = pd.to_datetime(intraday_data.index)
+            
+            if hasattr(intraday_data['datetime'].iloc[0], 'tz') and intraday_data['datetime'].iloc[0].tz is not None:
+                intraday_data['datetime'] = intraday_data['datetime'].dt.tz_localize(None)
+            
+            # Ensure required columns
+            if 'Close' in intraday_data.columns:
+                intraday_data.columns = [col.lower() for col in intraday_data.columns]
+        
+        # Filter for today only
+        today = datetime.now().strftime('%Y-%m-%d')
         today_date = pd.to_datetime(today).date()
         today_mask = intraday_data['datetime'].dt.date == today_date
         today_data = intraday_data[today_mask].copy()
@@ -742,55 +888,41 @@ def create_live_intraday_chart(symbol, analyzer):
         if today_data.empty:
             st.warning(f"⚠️ No data for today {today}")
             return None
+        
+        # 🔥 REALTIME PRICE UPDATE - Check Kafka real-time price
+        kafka_price = st.session_state.kafka_data.get(symbol)
+        if kafka_price and 'price' in kafka_price:
+            latest_price = kafka_price['price']
+            latest_time = pd.to_datetime(kafka_price['timestamp'])
             
-        # 🔥 REALTIME PRICE UPDATE - Get latest live price
-        try:
-            latest_price_data = quote.intraday(date=today, page_size=1)
-            if not latest_price_data.empty:
-                latest_price = latest_price_data['price'].iloc[0]
-                latest_time_str = latest_price_data['time'].iloc[0]
-                latest_time = pd.to_datetime(latest_time_str)
+            if latest_time.tz is not None:
+                latest_time = latest_time.tz_localize(None)
+            
+            # Update with real-time price from Kafka
+            if len(today_data) > 0:
+                last_historical_time = today_data['datetime'].iloc[-1]
                 
-                # Normalize timezone to avoid comparison issues
-                if latest_time.tz is not None:
-                    latest_time = latest_time.tz_localize(None)  # Remove timezone
-                
-                # Update the last close price with real-time data
-                if len(today_data) > 0:
-                    # Get last historical time and ensure it's timezone-naive
-                    last_historical_time = today_data['datetime'].iloc[-1]
-                    if hasattr(last_historical_time, 'tz') and last_historical_time.tz is not None:
-                        last_historical_time = last_historical_time.tz_localize(None)
+                if latest_time > last_historical_time:
+                    # Create new realtime point
+                    realtime_point = pd.DataFrame({
+                        'open': [latest_price],
+                        'high': [latest_price],
+                        'low': [latest_price], 
+                        'close': [latest_price],
+                        'volume': [kafka_price.get('volume', 0)],
+                        'datetime': [latest_time]
+                    })
                     
-                    # Compare timezone-naive timestamps
-                    if latest_time > last_historical_time:
-                        # Create new realtime point
-                        realtime_point = pd.DataFrame({
-                            'time': [latest_time_str],
-                            'open': [latest_price],
-                            'high': [latest_price],
-                            'low': [latest_price], 
-                            'close': [latest_price],
-                            'volume': [latest_price_data.get('volume', [0]).iloc[0] if 'volume' in latest_price_data.columns else 0],
-                            'datetime': [latest_time]  # timezone-naive
-                        })
-                        
-                        # Append realtime point to data
-                        today_data = pd.concat([today_data, realtime_point], ignore_index=True)
-                        st.success(f"🔥 **LIVE UPDATE**: {latest_price:,.1f} VND at {latest_time.strftime('%H:%M:%S')}")
-                    else:
-                        # Update existing last point with realtime price
-                        today_data.iloc[-1, today_data.columns.get_loc('close')] = latest_price
-                        st.info(f"📈 **PRICE UPDATE**: {latest_price:,.1f} VND")
-            else:
-                st.warning("⚠️ No realtime price data available")
-        except Exception as e:
-            st.warning(f"⚠️ Could not fetch realtime price: {e}")
+                    today_data = pd.concat([today_data, realtime_point], ignore_index=True)
+                    st.success(f"🔥 **LIVE UPDATE** (Kafka): {latest_price:,.1f} VND at {latest_time.strftime('%H:%M:%S')}")
+                else:
+                    today_data.iloc[-1, today_data.columns.get_loc('close')] = latest_price
+                    st.info(f"📈 **PRICE UPDATE** (Kafka): {latest_price:,.1f} VND")
             
         # Animation window calculation for default zoom
         now = datetime.now()
-        animation_start = now - timedelta(hours=1)      # 1 hour back
-        animation_end = now + timedelta(minutes=30)     # 30 minutes future
+        animation_start = now - timedelta(hours=1)
+        animation_end = now + timedelta(minutes=30)
         
         # Prepare OHLC data with proper column mapping
         ohlc_data = today_data.copy()
@@ -1072,24 +1204,6 @@ def create_live_intraday_chart(symbol, analyzer):
         avg_price = ohlc_data['Close'].mean()
         price_range = f"{ohlc_data['Low'].min():,.0f} - {ohlc_data['High'].max():,.0f}"
         
-        fig.add_annotation(
-            text=(
-                f"📈 Current: {latest_price:,.0f} VND | "
-                f"📊 Volume: {latest_volume:,.0f} | " 
-                f"🔄 Total Vol: {total_volume:,.0f}<br>"
-                f"📉 Day Range: {price_range} VND | "
-                f"⚖️ Average: {avg_price:,.0f} VND | "
-                f"🎯 Data Points: {len(ohlc_data)}"
-            ),
-            xref="paper", yref="paper",
-            x=0.5, y=-0.15,
-            showarrow=False,
-            font=dict(size=11, color='white'),
-            bgcolor='rgba(52,73,94,0.8)',
-            bordercolor='#5D6D7E',
-            borderwidth=1
-        )
-        
         return fig
         
     except Exception as e:
@@ -1349,20 +1463,45 @@ def create_performance_metrics(data, symbol):
 
 # Main Application
 def main():
-    # Start Kafka consumer if not running
+    # Start Kafka consumers if not running (SINGLETON PATTERN)
     if not st.session_state.consumer_running:
         try:
-            consumer_thread = threading.Thread(
-                target=kafka_consumer_thread,
-                args=(st.session_state.data_queue,),
-                daemon=True
-            )
-            consumer_thread.start()
+            logger.info("🚀 Starting Kafka consumer threads...")
+            
+            # Start 3 consumer threads for 3 topics
+            threads = [
+                threading.Thread(
+                    target=kafka_consumer_prices_thread,
+                    args=(st.session_state.data_queue_prices,),
+                    daemon=True,
+                    name="prices-consumer"
+                ),
+                threading.Thread(
+                    target=kafka_consumer_historical_thread,
+                    args=(st.session_state.data_queue_historical,),
+                    daemon=True,
+                    name="historical-consumer"
+                ),
+                threading.Thread(
+                    target=kafka_consumer_intraday_thread,
+                    args=(st.session_state.data_queue_intraday,),
+                    daemon=True,
+                    name="intraday-consumer"
+                )
+            ]
+            
+            for thread in threads:
+                thread.start()
+                st.session_state.consumer_threads.append(thread)
+                logger.info(f"✅ Started thread: {thread.name}")
+            
             st.session_state.consumer_running = True
-        except Exception:
-            pass
+            logger.info("✅ All Kafka consumers started successfully")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to start Kafka consumers: {e}")
     
-    # Process Kafka data
+    # Process Kafka data (always call this to process queue)
     process_kafka_data()
     
     # Title
@@ -1611,42 +1750,38 @@ def main():
                     st.error(f"❌ Connection failed: {str(e)[:50]}...")  # Clean error message
         
         with kafka_tab2:
-            # Live animation chart
-            st.write("### 🎬 Live Animation Chart")
+            # Live intraday chart - Real-time từ Kafka
+            st.write("### 📊 Live Intraday Chart (Real-time from Kafka)")
             
-            # Chart controls
+            # Status info
             col1, col2, col3 = st.columns(3)
             with col1:
-                auto_refresh = st.checkbox("🔄 Auto Animation", value=True, key="auto_refresh_animation")
+                kafka_intraday = st.session_state.kafka_intraday.get(symbol)
+                intraday_status = "🟢 Streaming" if kafka_intraday else "🟡 Waiting"
+                st.metric("📡 Intraday Data", intraday_status)
             with col2:
-                refresh_rate = st.selectbox(
-                    "Refresh Rate:",
-                    options=[30, 60, 120],
-                    index=1,
-                    format_func=lambda x: f"{x}s",
-                    key="animation_refresh_rate"
-                )
+                kafka_price = st.session_state.kafka_data.get(symbol)
+                price_status = "🟢 Live" if kafka_price else "🟡 Waiting"
+                st.metric("💰 Real-time Price", price_status)
             with col3:
                 st.metric("⏰ Current Time", datetime.now().strftime('%H:%M:%S'))
+            
+            st.info("📡 Chart tự động cập nhật theo data từ Kafka topics: `stock-intraday` và `stock-prices`")
             
             # Create and display live chart
             with st.spinner("🕰️ Loading live intraday data..."):
                 live_chart = create_live_intraday_chart(symbol, analyzer)
                 
                 if live_chart:
-                    st.plotly_chart(live_chart, width='stretch')
-                
+                    st.plotly_chart(live_chart, width='stretch', key="live_intraday_chart")
                 else:
-                    st.warning("⚠️ Unable to load live chart. Try again during market hours (9:00-15:00)")
-            
-            # 🔥 AUTO-REFRESH LOGIC for realtime updates
-            if auto_refresh:
-                time.sleep(refresh_rate)
-                st.rerun()
-            else:
-                # Manual refresh button for static mode
-                if st.button("🔄 Manual Refresh", key="manual_refresh_button", type="primary"):
-                    st.rerun()
+                    st.warning("⚠️ No intraday data available. Make sure Kafka producer is streaming.")
+                    st.markdown("""
+                    **Troubleshooting:**
+                    1. ✅ Kafka producer đang chạy: `python kafka_producer.py`
+                    2. ✅ Topic `stock-intraday` có messages
+                    3. ✅ Topic `stock-prices` có messages
+                    """)
         
         st.markdown("---")
     
