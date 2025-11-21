@@ -1792,29 +1792,20 @@ def main():
             with col1:
                 auto_refresh = st.checkbox("🔄 Auto Animation", value=True, key="auto_refresh_animation")
             with col2:
-                refresh_rate = st.selectbox(
-                    "Refresh Rate:",
-                    options=[10, 20, 30],
-                    index=1,
-                    format_func=lambda x: f"{x}s",
-                    key="animation_refresh_rate"
-                )
-            with col3:
                 st.metric("⏰ Current Time", datetime.now().strftime('%H:%M:%S'))
             
             # Create and display live chart
             with st.spinner("🕰️ Loading live intraday data..."):
+                import time
                 live_chart = create_live_intraday_chart(symbol, analyzer)
-                
                 if live_chart:
                     st.plotly_chart(live_chart, width='stretch')
-                
                 else:
                     st.warning("⚠️ Unable to load live chart. Try again during market hours (9:00-15:00)")
             
             # 🔥 AUTO-REFRESH LOGIC for realtime updates
             if auto_refresh:
-                time.sleep(refresh_rate)
+                time.sleep(10)
                 st.rerun()
             else:
                 # Manual refresh button for static mode
