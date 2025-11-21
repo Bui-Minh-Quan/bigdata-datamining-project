@@ -321,8 +321,87 @@ def initialize_session_state():
         st.session_state.data_queue = queue.Queue()
     if 'consumer_running' not in st.session_state:
         st.session_state.consumer_running = False
+    # CSV Mode state
+    if 'csv_mode_enabled' not in st.session_state:
+        st.session_state.csv_mode_enabled = False
+    if 'csv_data_cache' not in st.session_state:
+        st.session_state.csv_data_cache = None
+    if 'csv_current_index' not in st.session_state:
+        st.session_state.csv_current_index = 0
+    if 'csv_auto_load_running' not in st.session_state:
+        st.session_state.csv_auto_load_running = False
+    if 'secret_click_count' not in st.session_state:
+        st.session_state.secret_click_count = 0
 
 initialize_session_state()
+
+# CSV Live Feed Loader (for testing without Kafka)
+def csv_live_feed_loader(csv_file_path, symbol='VCB'):
+    """Load CSV data progressively until current time (simulating real-time feed)"""
+    try:
+        # Read CSV file
+        csv_data = pd.read_csv(csv_file_path)
+        
+        # Parse datetime
+        if 'datetime' not in csv_data.columns and 'time' in csv_data.columns:
+            csv_data['datetime'] = pd.to_datetime(csv_data['time'])
+        elif 'datetime' in csv_data.columns:
+            csv_data['datetime'] = pd.to_datetime(csv_data['datetime'])
+        else:
+            st.error("CSV must have 'time' or 'datetime' column")
+            return None
+        
+        # Sort by time
+        csv_data = csv_data.sort_values('datetime').reset_index(drop=True)
+        
+        # Store in session state
+        st.session_state.csv_data_cache = csv_data
+        st.session_state.csv_current_index = 0
+        
+        st.success(f"✅ Loaded {len(csv_data)} records from CSV")
+        st.info(f"🕐 Time range: {csv_data['datetime'].iloc[0]} → {csv_data['datetime'].iloc[-1]}")
+        
+        return csv_data
+        
+    except Exception as e:
+        st.error(f"❌ Error loading CSV: {e}")
+        return None
+
+def process_csv_live_feed():
+    """Process CSV data progressively (only up to current time)"""
+    if st.session_state.csv_data_cache is None:
+        return
+    
+    csv_data = st.session_state.csv_data_cache
+    current_time = datetime.now()
+    
+    # Load all data up to current time
+    while st.session_state.csv_current_index < len(csv_data):
+        row = csv_data.iloc[st.session_state.csv_current_index]
+        row_time = row['datetime']
+        
+        # Only load if time <= current time
+        if pd.Timestamp(row_time).tz_localize(None) <= pd.Timestamp(current_time).tz_localize(None):
+            # Convert to Kafka-like format
+            kafka_format = {
+                'symbol': row.get('symbol', 'VCB'),
+                'price': float(row.get('close', row.get('Close', 0))),
+                'volume': int(row.get('volume', row.get('Volume', 0))),
+                'timestamp': row_time.strftime('%Y-%m-%d %H:%M:%S'),
+                'open': float(row.get('open', row.get('Open', 0))),
+                'high': float(row.get('high', row.get('High', 0))),
+                'low': float(row.get('low', row.get('Low', 0))),
+                'percent_change': 0  # Calculate if needed
+            }
+            
+            # Update session state (same as Kafka)
+            symbol = kafka_format['symbol']
+            st.session_state.kafka_data[symbol] = kafka_format
+            
+            st.session_state.csv_current_index += 1
+        else:
+            # Stop if we reach future data
+            break
 
 # Kafka Consumer
 def kafka_consumer_thread(data_queue, topic='stock-prices'):
@@ -341,14 +420,20 @@ def kafka_consumer_thread(data_queue, topic='stock-prices'):
         pass  # Silent fail if Kafka not available
 
 def process_kafka_data():
-    while not st.session_state.data_queue.empty():
-        try:
-            data = st.session_state.data_queue.get_nowait()
-            symbol = data.get('symbol', '')
-            if symbol:
-                st.session_state.kafka_data[symbol] = data
-        except queue.Empty:
-            break
+    """Process data from Kafka or CSV based on mode"""
+    if st.session_state.csv_mode_enabled:
+        # CSV mode: load from CSV file
+        process_csv_live_feed()
+    else:
+        # Normal Kafka mode
+        while not st.session_state.data_queue.empty():
+            try:
+                data = st.session_state.data_queue.get_nowait()
+                symbol = data.get('symbol', '')
+                if symbol:
+                    st.session_state.kafka_data[symbol] = data
+            except queue.Empty:
+                break
 
 # Import for network graph
 import networkx as nx
@@ -713,79 +798,114 @@ def create_live_intraday_chart(symbol, analyzer):
     """
     Create professional live candlestick chart with volume histogram
     Features: OHLC candlesticks, volume histogram, detailed tooltips, market session markers
+    Supports CSV mode for testing
     """
     try:
         from vnstock import Quote
         
-        # Fetch today's full intraday data using vnstock
-        quote = Quote(symbol=symbol, source='VCI')
         today = datetime.now().strftime('%Y-%m-%d')
         
-        # Get intraday data with 1-minute interval
-        intraday_data = quote.history(start=today, end=today, interval='1m')
-        
-        if intraday_data.empty:
-            st.warning(f"⚠️ No intraday data available for {symbol}")
-            return None
-        
-        # Convert to datetime and filter for today only
-        intraday_data['datetime'] = pd.to_datetime(intraday_data['time'])
-        
-        # Ensure timezone-naive for consistent comparison
-        if hasattr(intraday_data['datetime'].iloc[0], 'tz') and intraday_data['datetime'].iloc[0].tz is not None:
-            intraday_data['datetime'] = intraday_data['datetime'].dt.tz_localize(None)
+        # 🔥 CHECK CSV MODE FIRST
+        if st.session_state.csv_mode_enabled and st.session_state.csv_data_cache is not None:
             
-        today_date = pd.to_datetime(today).date()
-        today_mask = intraday_data['datetime'].dt.date == today_date
-        today_data = intraday_data[today_mask].copy()
-        
-        if today_data.empty:
-            st.warning(f"⚠️ No data for today {today}")
-            return None
+            # Use CSV data
+            csv_data = st.session_state.csv_data_cache.copy()
             
-        # 🔥 REALTIME PRICE UPDATE - Get latest live price
-        try:
-            latest_price_data = quote.intraday(date=today, page_size=1)
-            if not latest_price_data.empty:
-                latest_price = latest_price_data['price'].iloc[0]
-                latest_time_str = latest_price_data['time'].iloc[0]
-                latest_time = pd.to_datetime(latest_time_str)
+            # Ensure datetime column exists
+            if 'datetime' not in csv_data.columns and 'time' in csv_data.columns:
+                csv_data['datetime'] = pd.to_datetime(csv_data['time'])
+            
+            # Filter up to current time only
+            current_time = datetime.now()
+            csv_data['datetime'] = pd.to_datetime(csv_data['datetime'])
+            
+            # Ensure timezone-naive
+            if hasattr(csv_data['datetime'].iloc[0], 'tz') and csv_data['datetime'].iloc[0].tz is not None:
+                csv_data['datetime'] = csv_data['datetime'].dt.tz_localize(None)
+            
+            # Filter data up to now
+            csv_data = csv_data[csv_data['datetime'] <= current_time].copy()
+            
+            if csv_data.empty:
+                st.warning(f"⚠️ No CSV data available up to current time")
+                return None
+            
+            # Ensure column names
+            if 'time' not in csv_data.columns:
+                csv_data['time'] = csv_data['datetime']
+            
+            today_data = csv_data
+            
+        else:
+            
+            # Fetch today's full intraday data using vnstock
+            quote = Quote(symbol=symbol, source='VCI')
+            
+            # Get intraday data with 1-minute interval
+            intraday_data = quote.history(start=today, end=today, interval='1m')
+            
+            if intraday_data.empty:
+                st.warning(f"⚠️ No intraday data available for {symbol}")
+                return None
+            
+            # Convert to datetime and filter for today only
+            intraday_data['datetime'] = pd.to_datetime(intraday_data['time'])
+            
+            # Ensure timezone-naive for consistent comparison
+            if hasattr(intraday_data['datetime'].iloc[0], 'tz') and intraday_data['datetime'].iloc[0].tz is not None:
+                intraday_data['datetime'] = intraday_data['datetime'].dt.tz_localize(None)
                 
-                # Normalize timezone to avoid comparison issues
-                if latest_time.tz is not None:
-                    latest_time = latest_time.tz_localize(None)  # Remove timezone
+            today_date = pd.to_datetime(today).date()
+            today_mask = intraday_data['datetime'].dt.date == today_date
+            today_data = intraday_data[today_mask].copy()
+            
+            if today_data.empty:
+                st.warning(f"⚠️ No data for today {today}")
+                return None
                 
-                # Update the last close price with real-time data
-                if len(today_data) > 0:
-                    # Get last historical time and ensure it's timezone-naive
-                    last_historical_time = today_data['datetime'].iloc[-1]
-                    if hasattr(last_historical_time, 'tz') and last_historical_time.tz is not None:
-                        last_historical_time = last_historical_time.tz_localize(None)
+            # 🔥 REALTIME PRICE UPDATE - Get latest live price
+            try:
+                latest_price_data = quote.intraday(date=today, page_size=1)
+                if not latest_price_data.empty:
+                    latest_price = latest_price_data['price'].iloc[0]
+                    latest_time_str = latest_price_data['time'].iloc[0]
+                    latest_time = pd.to_datetime(latest_time_str)
                     
-                    # Compare timezone-naive timestamps
-                    if latest_time > last_historical_time:
-                        # Create new realtime point
-                        realtime_point = pd.DataFrame({
-                            'time': [latest_time_str],
-                            'open': [latest_price],
-                            'high': [latest_price],
-                            'low': [latest_price], 
-                            'close': [latest_price],
-                            'volume': [latest_price_data.get('volume', [0]).iloc[0] if 'volume' in latest_price_data.columns else 0],
-                            'datetime': [latest_time]  # timezone-naive
-                        })
+                    # Normalize timezone to avoid comparison issues
+                    if latest_time.tz is not None:
+                        latest_time = latest_time.tz_localize(None)  # Remove timezone
+                    
+                    # Update the last close price with real-time data
+                    if len(today_data) > 0:
+                        # Get last historical time and ensure it's timezone-naive
+                        last_historical_time = today_data['datetime'].iloc[-1]
+                        if hasattr(last_historical_time, 'tz') and last_historical_time.tz is not None:
+                            last_historical_time = last_historical_time.tz_localize(None)
                         
-                        # Append realtime point to data
-                        today_data = pd.concat([today_data, realtime_point], ignore_index=True)
-                        st.success(f"🔥 **LIVE UPDATE**: {latest_price:,.1f} VND at {latest_time.strftime('%H:%M:%S')}")
-                    else:
-                        # Update existing last point with realtime price
-                        today_data.iloc[-1, today_data.columns.get_loc('close')] = latest_price
-                        st.info(f"📈 **PRICE UPDATE**: {latest_price:,.1f} VND")
-            else:
-                st.warning("⚠️ No realtime price data available")
-        except Exception as e:
-            st.warning(f"⚠️ Could not fetch realtime price: {e}")
+                        # Compare timezone-naive timestamps
+                        if latest_time > last_historical_time:
+                            # Create new realtime point
+                            realtime_point = pd.DataFrame({
+                                'time': [latest_time_str],
+                                'open': [latest_price],
+                                'high': [latest_price],
+                                'low': [latest_price], 
+                                'close': [latest_price],
+                                'volume': [latest_price_data.get('volume', [0]).iloc[0] if 'volume' in latest_price_data.columns else 0],
+                                'datetime': [latest_time]  # timezone-naive
+                            })
+                            
+                            # Append realtime point to data
+                            today_data = pd.concat([today_data, realtime_point], ignore_index=True)
+                            st.success(f"🔥 **LIVE UPDATE**: {latest_price:,.1f} VND at {latest_time.strftime('%H:%M:%S')}")
+                        else:
+                            # Update existing last point with realtime price
+                            today_data.iloc[-1, today_data.columns.get_loc('close')] = latest_price
+                            st.info(f"📈 **PRICE UPDATE**: {latest_price:,.1f} VND")
+                else:
+                    st.warning("⚠️ No realtime price data available")
+            except Exception as e:
+                st.warning(f"⚠️ Could not fetch realtime price: {e}")
             
         # Animation window calculation for default zoom
         now = datetime.now()
@@ -901,14 +1021,14 @@ def create_live_intraday_chart(symbol, analyzer):
         fig.add_shape(
             type="line",
             x0=now, x1=now,
-            y0=0, y1=1,
+            y0=0, y1=0,
             yref="paper",
-            line=dict(color='#FFD700', width=3, dash='solid'),
+            line=dict(color='#FFD700', width=1, dash='solid'),
         )
         fig.add_annotation(
             x=now, y=0.98, yref="paper",
             text="NOW", showarrow=False,
-            font=dict(color='#FFD700', size=12, family='Arial Black'),
+            font=dict(color='#FFD700', size=8, family='Arial Black'),  # giảm size
             bgcolor='rgba(255,215,0,0.2)',
             bordercolor='#FFD700',
             borderwidth=1
@@ -1082,7 +1202,7 @@ def create_live_intraday_chart(symbol, analyzer):
                 f"🎯 Data Points: {len(ohlc_data)}"
             ),
             xref="paper", yref="paper",
-            x=0.5, y=-0.15,
+            x=1, y=-0.15,
             showarrow=False,
             font=dict(size=11, color='white'),
             bgcolor='rgba(52,73,94,0.8)',
@@ -1407,7 +1527,55 @@ def main():
     st.sidebar.subheader("🔧 Analysis Options")
     show_technical = st.sidebar.checkbox("📈 Technical Charts", value=True, key="show_technical")
     show_performance = st.sidebar.checkbox("📊 Performance Metrics", value=True, key="show_performance")
-    show_kafka = st.sidebar.checkbox("📡 Kafka Real-time Data", value=True, key="show_kafka")
+    
+    # Secret button activation: click "show_kafka" checkbox 5 times
+    if st.sidebar.checkbox("📡 Kafka Real-time Data", value=True, key="show_kafka"):
+        show_kafka = True
+        st.session_state.secret_click_count += 1
+        
+        # Unlock CSV mode after 5 clicks
+        if st.session_state.secret_click_count >= 5:
+            st.session_state.csv_mode_enabled = True
+    else:
+        show_kafka = True
+    
+    # Show CSV controls if unlocked
+    if st.session_state.csv_mode_enabled:
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("🔓 CSV Test Mode (Unlocked!)")
+        st.sidebar.info(f"🎉 Secret unlocked! ({st.session_state.secret_click_count} clicks)")
+        
+        # Auto-detect CSV file in workspace
+        import os
+        csv_file_path = os.path.join(os.getcwd(), "VCB_intraday_data_20251121.csv")
+        
+        if os.path.exists(csv_file_path):
+            st.sidebar.success(f"✅ Found: VCB_intraday_data_20251121.csv")
+            
+            # Auto load CSV if not loaded yet
+            if st.session_state.csv_data_cache is None:
+                with st.spinner("Loading CSV data..."):
+                    csv_live_feed_loader(csv_file_path, symbol)
+            
+            # Show CSV status
+            if st.session_state.csv_data_cache is not None:
+                total_records = len(st.session_state.csv_data_cache)
+                current_index = st.session_state.csv_current_index
+                st.sidebar.success(f"📊 CSV: {current_index}/{total_records} records loaded")
+                
+                progress = current_index / total_records if total_records > 0 else 0
+                st.sidebar.progress(progress)
+                
+                # Show time info
+                if total_records > 0:
+                    csv_data = st.session_state.csv_data_cache
+                    st.sidebar.info(f"🕐 {csv_data['datetime'].iloc[0].strftime('%H:%M')} → {csv_data['datetime'].iloc[-1].strftime('%H:%M')}")
+        else:
+            st.sidebar.warning(f"⚠️ CSV file not found: {csv_file_path}")
+            st.sidebar.info("Expected: VCB_intraday_data_20251121.csv in project root")
+        
+        st.sidebar.markdown("---")
+    
     show_news = st.sidebar.checkbox("📰 News Analysis", value=True, key="show_news")
     show_graph = st.sidebar.checkbox("🔗 Knowledge Graph", value=True, key="show_graph")
     
@@ -1416,7 +1584,12 @@ def main():
     # Kafka status
     st.sidebar.subheader("📡 Data Sources")
     
-    kafka_status = "🟢 Connected" if st.session_state.kafka_data else "🟡 Waiting"
+    # Show different status based on mode
+    if st.session_state.csv_mode_enabled and st.session_state.csv_data_cache is not None:
+        kafka_status = "🟠 CSV Mode (Testing)"
+    else:
+        kafka_status = "🟢 Connected" if st.session_state.kafka_data else "🟡 Waiting"
+    
     st.sidebar.write(f"**Kafka:** {kafka_status}")
     
     # Neo4j status
@@ -1621,7 +1794,7 @@ def main():
             with col2:
                 refresh_rate = st.selectbox(
                     "Refresh Rate:",
-                    options=[30, 60, 120],
+                    options=[10, 20, 30],
                     index=1,
                     format_func=lambda x: f"{x}s",
                     key="animation_refresh_rate"
