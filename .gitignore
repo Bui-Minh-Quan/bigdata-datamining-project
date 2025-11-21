@@ -1,6 +1,5 @@
 # ignore .csv and .txt files
 *.csv
-*.txt
 
 # ignore .log files
 *.log
@@ -30,3 +29,7 @@ TRR_model.py
 # ignore .cpython files
 *.cpython-*.pyc
 *.pyc
+
+# ignore Jupyter Notebook file
+test.ipynb
+

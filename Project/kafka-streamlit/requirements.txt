@@ -1,0 +1,19 @@
+# Kafka & Streaming
+kafka-python==2.0.2
+
+# Data & Stock APIs
+vnstock==3.3.0
+pandas==2.1.4
+numpy==1.26.4
+
+# Streamlit & Visualization
+streamlit==1.29.0
+plotly==5.18.0
+kaleido==0.2.1
+networkx==3.2.1
+
+# Database
+neo4j==5.14.1
+
+# Utils
+python-dotenv==1.0.0

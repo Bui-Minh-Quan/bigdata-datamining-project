@@ -197,6 +197,10 @@ class VietnamStockAnalyzer:
                     if not history_data.empty:
                         # Filter from 9:30
                         history_data.index = pd.to_datetime(history_data.index)
+                        # Ensure timezone-naive for consistent comparison
+                        if hasattr(history_data.index, 'tz') and history_data.index.tz is not None:
+                            history_data.index = history_data.index.tz_localize(None)
+                        
                         morning_start_dt = now.replace(hour=9, minute=30, second=0, microsecond=0)
                         filtered_data = history_data[history_data.index >= morning_start_dt]
                         
@@ -212,13 +216,19 @@ class VietnamStockAnalyzer:
                                 current_price = current_data.iloc[0]['price']
                                 current_time_str = current_data.iloc[0]['time']
                                 
-                                # Parse time properly
+                                # Parse time properly and remove timezone for consistent comparison
                                 if isinstance(current_time_str, str):
                                     current_dt = pd.to_datetime(current_time_str)
                                 else:
                                     current_dt = current_time_str
                                 
-                                if len(filtered_data) == 0 or current_dt > filtered_data.index[-1]:
+                                # Remove timezone info to make it consistent
+                                if current_dt.tz is not None:
+                                    current_dt = current_dt.tz_localize(None)
+                                
+                                # Compare with timezone-naive index
+                                last_time = filtered_data.index[-1] if len(filtered_data) > 0 else None
+                                if len(filtered_data) == 0 or (last_time is not None and current_dt > last_time):
                                     # Create current point with proper OHLC structure
                                     current_point = pd.DataFrame({
                                         'Open': [current_price],
@@ -253,6 +263,11 @@ class VietnamStockAnalyzer:
                         if 'open' in history_data.columns:
                             history_data.columns = [col.capitalize() for col in history_data.columns]
                         
+                        # Fix timezone issues
+                        history_data.index = pd.to_datetime(history_data.index)
+                        if hasattr(history_data.index, 'tz') and history_data.index.tz is not None:
+                            history_data.index = history_data.index.tz_localize(None)
+                        
                         # Validate required columns exist
                         required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
                         if all(col in history_data.columns for col in required_cols):
@@ -273,6 +288,11 @@ class VietnamStockAnalyzer:
                     # Ensure proper column names
                     if 'open' in fallback_data.columns:
                         fallback_data.columns = [col.capitalize() for col in fallback_data.columns]
+                    
+                    # Fix timezone issues
+                    fallback_data.index = pd.to_datetime(fallback_data.index)
+                    if hasattr(fallback_data.index, 'tz') and fallback_data.index.tz is not None:
+                        fallback_data.index = fallback_data.index.tz_localize(None)
                     
                     # Validate required columns
                     required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
@@ -597,6 +617,10 @@ def create_ai_prediction(last_price, last_time, future_minutes=30):
     now = datetime.now()
     market_close = now.replace(hour=15, minute=0, second=0)
     
+    # Ensure last_time is timezone-naive for consistent comparison
+    if hasattr(last_time, 'tz') and last_time.tz is not None:
+        last_time = last_time.tz_localize(None)
+    
     # Only predict if market is still open
     if now.hour >= 15:
         return [], []
@@ -686,218 +710,391 @@ def create_animated_price_display(symbol, current_price, percent_change):
     return price_container
 
 def create_live_intraday_chart(symbol, analyzer):
-    """Create live intraday chart with future gap and AI prediction"""
+    """
+    Create professional live candlestick chart with volume histogram
+    Features: OHLC candlesticks, volume histogram, detailed tooltips, market session markers
+    """
     try:
-        # Fetch intraday data
-        intraday_data = analyzer.fetch_intraday_data(symbol, '5m')
+        from vnstock import Quote
         
-        if intraday_data is None or intraday_data.empty:
-            st.warning("⚠️ No intraday data available")
-            return None
-            
-        # Validate data structure
-        required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
-        missing_cols = [col for col in required_cols if col not in intraday_data.columns]
+        # Fetch today's full intraday data using vnstock
+        quote = Quote(symbol=symbol, source='VCI')
+        today = datetime.now().strftime('%Y-%m-%d')
         
-        if missing_cols:
-            st.error(f"❌ Data missing columns: {missing_cols}")
-            st.error(f"📋 Available columns: {list(intraday_data.columns)}")
-            st.error(f"📊 Data sample: {intraday_data.head(1).to_dict() if not intraday_data.empty else 'Empty DataFrame'}")
-            return None
-            
-        # Create mock fallback data if needed
-        if intraday_data is None or intraday_data.empty:
-            st.info("🕰️ Creating demo data (market closed or data unavailable)")
-            
-            now = datetime.now()
-            start_time = now.replace(hour=9, minute=0, second=0, microsecond=0)
-            
-            times = []
-            prices = []
-            volumes = []
-            
-            base_price = 25000 + random.uniform(-1000, 1000)
-            current_price = base_price
-            
-            # Generate data every 5 minutes from 9:00 to current time
-            current_time = start_time
-            while current_time <= now and current_time.hour < 15:
-                times.append(current_time)
-                
-                # Random price movement
-                change = random.uniform(-200, 250)
-                current_price += change
-                prices.append(current_price)
-                volumes.append(random.randint(1000, 10000))
-                
-                current_time += timedelta(minutes=5)
-            
-            # Create DataFrame
-            intraday_data = pd.DataFrame({
-                'Open': prices,
-                'High': [p + random.uniform(0, 100) for p in prices],
-                'Low': [p - random.uniform(0, 100) for p in prices], 
-                'Close': prices,
-                'Volume': volumes
-            }, index=times)
+        # Get intraday data with 1-minute interval
+        intraday_data = quote.history(start=today, end=today, interval='1m')
         
         if intraday_data.empty:
-            st.warning("⚠️ No intraday data available")
+            st.warning(f"⚠️ No intraday data available for {symbol}")
+            return None
+        
+        # Convert to datetime and filter for today only
+        intraday_data['datetime'] = pd.to_datetime(intraday_data['time'])
+        
+        # Ensure timezone-naive for consistent comparison
+        if hasattr(intraday_data['datetime'].iloc[0], 'tz') and intraday_data['datetime'].iloc[0].tz is not None:
+            intraday_data['datetime'] = intraday_data['datetime'].dt.tz_localize(None)
+            
+        today_date = pd.to_datetime(today).date()
+        today_mask = intraday_data['datetime'].dt.date == today_date
+        today_data = intraday_data[today_mask].copy()
+        
+        if today_data.empty:
+            st.warning(f"⚠️ No data for today {today}")
             return None
             
-        # Get market hours and current time
+        # 🔥 REALTIME PRICE UPDATE - Get latest live price
+        try:
+            latest_price_data = quote.intraday(date=today, page_size=1)
+            if not latest_price_data.empty:
+                latest_price = latest_price_data['price'].iloc[0]
+                latest_time_str = latest_price_data['time'].iloc[0]
+                latest_time = pd.to_datetime(latest_time_str)
+                
+                # Normalize timezone to avoid comparison issues
+                if latest_time.tz is not None:
+                    latest_time = latest_time.tz_localize(None)  # Remove timezone
+                
+                # Update the last close price with real-time data
+                if len(today_data) > 0:
+                    # Get last historical time and ensure it's timezone-naive
+                    last_historical_time = today_data['datetime'].iloc[-1]
+                    if hasattr(last_historical_time, 'tz') and last_historical_time.tz is not None:
+                        last_historical_time = last_historical_time.tz_localize(None)
+                    
+                    # Compare timezone-naive timestamps
+                    if latest_time > last_historical_time:
+                        # Create new realtime point
+                        realtime_point = pd.DataFrame({
+                            'time': [latest_time_str],
+                            'open': [latest_price],
+                            'high': [latest_price],
+                            'low': [latest_price], 
+                            'close': [latest_price],
+                            'volume': [latest_price_data.get('volume', [0]).iloc[0] if 'volume' in latest_price_data.columns else 0],
+                            'datetime': [latest_time]  # timezone-naive
+                        })
+                        
+                        # Append realtime point to data
+                        today_data = pd.concat([today_data, realtime_point], ignore_index=True)
+                        st.success(f"🔥 **LIVE UPDATE**: {latest_price:,.1f} VND at {latest_time.strftime('%H:%M:%S')}")
+                    else:
+                        # Update existing last point with realtime price
+                        today_data.iloc[-1, today_data.columns.get_loc('close')] = latest_price
+                        st.info(f"📈 **PRICE UPDATE**: {latest_price:,.1f} VND")
+            else:
+                st.warning("⚠️ No realtime price data available")
+        except Exception as e:
+            st.warning(f"⚠️ Could not fetch realtime price: {e}")
+            
+        # Animation window calculation for default zoom
         now = datetime.now()
-        market_open = now.replace(hour=9, minute=0, second=0)
-        market_close = now.replace(hour=15, minute=0, second=0)
-        lunch_start = now.replace(hour=11, minute=30, second=0)
-        lunch_end = now.replace(hour=13, minute=0, second=0)
+        animation_start = now - timedelta(hours=1)      # 1 hour back
+        animation_end = now + timedelta(minutes=30)     # 30 minutes future
         
-        # Create figure
-        fig = go.Figure()
+        # Prepare OHLC data with proper column mapping
+        ohlc_data = today_data.copy()
         
-        # Add candlestick chart
-        fig.add_trace(
-            go.Candlestick(
-                x=intraday_data.index,
-                open=intraday_data['Open'],
-                high=intraday_data['High'],
-                low=intraday_data['Low'],
-                close=intraday_data['Close'],
-                name=f'{symbol} Price',
-                increasing_line_color='#00ff88',
-                decreasing_line_color='#ff4444',
-                showlegend=False
-            )
+        # Ensure proper column names for candlestick
+        column_mapping = {
+            'open': 'Open',
+            'high': 'High', 
+            'low': 'Low',
+            'close': 'Close',
+            'volume': 'Volume'
+        }
+        
+        for old_col, new_col in column_mapping.items():
+            if old_col in ohlc_data.columns and new_col not in ohlc_data.columns:
+                ohlc_data[new_col] = ohlc_data[old_col]
+        
+        # Calculate price changes for coloring
+        ohlc_data['Price_Change'] = ohlc_data['Close'] - ohlc_data['Open']
+        ohlc_data['Price_Change_Pct'] = (ohlc_data['Price_Change'] / ohlc_data['Open']) * 100
+        
+        # Create subplot with secondary y-axis for volume
+        from plotly.subplots import make_subplots
+        
+        fig = make_subplots(
+            rows=2, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.02,
+            row_heights=[0.7, 0.3],  # Price chart 70%, Volume 30%
         )
         
-        # Add AI prediction line (straight to market close)
-        # Get last price and time for prediction
-        last_price = intraday_data['Close'].iloc[-1] if not intraday_data.empty else 25000
-        last_time = intraday_data.index[-1] if not intraday_data.empty else now
-        
-        future_times, future_prices = create_ai_prediction(last_price, last_time, 30)
-        
-        if future_times:
-            fig.add_trace(
-                go.Scatter(
-                    x=future_times,
-                    y=future_prices,
-                    mode='lines',
-                    name='AI Prediction → 15:00',
-                    line=dict(color='#FF6B6B', width=2, dash='solid'),
-                    opacity=0.8
-                )
-            )
-        
-        # Add market hours markers using shapes instead of add_vline
-        # Market Open
-        fig.add_shape(
-            type="line",
-            x0=market_open, x1=market_open,
-            y0=0, y1=1,
-            yref="paper",
-            line=dict(color='green', width=2, dash='dash'),
-        )
-        fig.add_annotation(
-            x=market_open, y=0.9, yref="paper",
-            text="Market Open", showarrow=False,
-            font=dict(color='green')
-        )
-        
-        # Market Close
-        fig.add_shape(
-            type="line",
-            x0=market_close, x1=market_close,
-            y0=0, y1=1,
-            yref="paper",
-            line=dict(color='red', width=2, dash='dash'),
-        )
-        fig.add_annotation(
-            x=market_close, y=0.9, yref="paper",
-            text="Market Close", showarrow=False,
-            font=dict(color='red')
-        )
-        
-        # Lunch Break
-        fig.add_shape(
-            type="line",
-            x0=lunch_start, x1=lunch_start,
-            y0=0, y1=1,
-            yref="paper",
-            line=dict(color='orange', width=1, dash='dot'),
-        )
-        fig.add_annotation(
-            x=lunch_start, y=0.1, yref="paper",
-            text="Lunch Break", showarrow=False,
-            font=dict(color='orange')
-        )
-        
-        # Lunch End
-        fig.add_shape(
-            type="line",
-            x0=lunch_end, x1=lunch_end,
-            y0=0, y1=1,
-            yref="paper",
-            line=dict(color='orange', width=1, dash='dot'),
-        )
-        fig.add_annotation(
-            x=lunch_end, y=0.1, yref="paper",
-            text="Lunch End", showarrow=False,
-            font=dict(color='orange')
-        )
-        
-        # Set x-axis range to include future gap
-        end_time = market_close + timedelta(minutes=30)  # Extra gap for future
-        start_time = market_open - timedelta(minutes=30)  # Pre-market gap
-        
-        fig.update_layout(
-            title=dict(
-                text=f"📊 {symbol} Live Intraday Chart - {now.strftime('%Y-%m-%d')}",
-                font=dict(size=16)
+        # === MAIN CANDLESTICK CHART ===
+        candlestick = go.Candlestick(
+            x=ohlc_data['datetime'],
+            open=ohlc_data['Open'],
+            high=ohlc_data['High'],
+            low=ohlc_data['Low'],
+            close=ohlc_data['Close'],
+            name=f'{symbol} OHLC',
+            increasing_line_color='#26C281',  # Green for bullish candles
+            decreasing_line_color='#E74C3C',  # Red for bearish candles
+            increasing_fillcolor='#26C281',
+            decreasing_fillcolor='#E74C3C',
+            line=dict(width=1),
+            hovertemplate=(
+                '<b>🕐 Time:</b> %{x|%H:%M:%S}<br>'
+                '<b>📈 Open:</b> %{open:,.1f} VND<br>'
+                '<b>🔝 High:</b> %{high:,.1f} VND<br>'
+                '<b>🔻 Low:</b> %{low:,.1f} VND<br>'
+                '<b>💰 Close:</b> %{close:,.1f} VND<br>'
+                '<b>📊 Change:</b> %{customdata[0]:+.1f} VND (%{customdata[1]:+.2f}%)<br>'
+                '<extra></extra>'
             ),
-            xaxis=dict(
-                title="Time",
-                range=[start_time, end_time],
-                type='date',
-                tickformat='%H:%M',
-                showgrid=True,
-                gridcolor='rgba(128,128,128,0.2)'
-            ),
-            yaxis=dict(
-                title="Price (VNĐ)",
-                showgrid=True,
-                gridcolor='rgba(128,128,128,0.2)'
-            ),
-            plot_bgcolor='#1E1E1E',
-            paper_bgcolor='#2E2E2E',
-            height=500,
-            showlegend=True,
-            legend=dict(
-                x=0.02, y=0.98,
-                bgcolor='rgba(255,255,255,0.1)',
-                bordercolor='#666',
-                borderwidth=1
-            )
+            customdata=np.column_stack((ohlc_data['Price_Change'], ohlc_data['Price_Change_Pct']))
         )
         
-        # Add current time marker
+        fig.add_trace(candlestick, row=1, col=1)
+        
+        # === VOLUME HISTOGRAM ===
+        # Color volume bars based on price change
+        volume_colors = ['#26C281' if change >= 0 else '#E74C3C' for change in ohlc_data['Price_Change']]
+        
+        volume_bar = go.Bar(
+            x=ohlc_data['datetime'],
+            y=ohlc_data['Volume'],
+            name='Volume',
+            marker_color=volume_colors,
+            opacity=0.7,
+            hovertemplate=(
+                '<b>🕐 Time:</b> %{x|%H:%M:%S}<br>'
+                '<b>📊 Volume:</b> %{y:,.0f}<br>'
+                '<b>💰 Price:</b> %{customdata:,.1f} VND<br>'
+                '<extra></extra>'
+            ),
+            customdata=ohlc_data['Close']
+        )
+        
+        fig.add_trace(volume_bar, row=2, col=1)
+        
+        # === MOVING AVERAGES ===
+        # Calculate moving averages
+        ohlc_data['MA_20'] = ohlc_data['Close'].rolling(window=20, min_periods=1).mean()
+        ohlc_data['MA_50'] = ohlc_data['Close'].rolling(window=50, min_periods=1).mean()
+        
+        # Add moving averages if enough data
+        if len(ohlc_data) >= 20:
+            fig.add_trace(go.Scatter(
+                x=ohlc_data['datetime'],
+                y=ohlc_data['MA_20'],
+                mode='lines',
+                name='MA20',
+                line=dict(color='#F39C12', width=2),
+                hovertemplate='<b>MA20:</b> %{y:,.1f} VND<extra></extra>'
+            ), row=1, col=1)
+        
+        if len(ohlc_data) >= 50:
+            fig.add_trace(go.Scatter(
+                x=ohlc_data['datetime'],
+                y=ohlc_data['MA_50'],
+                mode='lines',
+                name='MA50',
+                line=dict(color='#9B59B6', width=2),
+                hovertemplate='<b>MA50:</b> %{y:,.1f} VND<extra></extra>'
+            ), row=1, col=1)
+        
+        # === MARKET SESSION MARKERS ===
+        # NOW marker using add_shape instead of add_vline
         fig.add_shape(
             type="line",
             x0=now, x1=now,
             y0=0, y1=1,
             yref="paper",
-            line=dict(color='yellow', width=2),
+            line=dict(color='#FFD700', width=3, dash='solid'),
         )
         fig.add_annotation(
-            x=now, y=0.95, yref="paper",
-            text="Now", showarrow=False,
-            font=dict(color='yellow')
+            x=now, y=0.98, yref="paper",
+            text="NOW", showarrow=False,
+            font=dict(color='#FFD700', size=12, family='Arial Black'),
+            bgcolor='rgba(255,215,0,0.2)',
+            bordercolor='#FFD700',
+            borderwidth=1
+        )
+        
+        # Market sessions
+        morning_start = now.replace(hour=9, minute=0, second=0, microsecond=0)
+        morning_end = now.replace(hour=11, minute=30, second=0, microsecond=0) 
+        lunch_start = morning_end
+        lunch_end = now.replace(hour=13, minute=0, second=0, microsecond=0)
+        afternoon_start = lunch_end
+        afternoon_end = now.replace(hour=15, minute=0, second=0, microsecond=0)
+        
+        # Add session markers with subtle styling
+        sessions = [
+            (morning_start, morning_end, "Morning Session\n9:00-11:30", '#28B463', 0.1),
+            (lunch_start, lunch_end, "Lunch Break\n11:30-13:00", '#95A5A6', 0.05),
+            (afternoon_start, afternoon_end, "Afternoon Session\n13:00-15:00", '#3498DB', 0.1)
+        ]
+        
+        for start, end, label, color, opacity in sessions:
+            # Add vertical lines for session boundaries using add_shape
+            fig.add_shape(
+                type="line",
+                x0=start, x1=start,
+                y0=0, y1=1,
+                yref="paper",
+                line=dict(color=color, width=1, dash='dot'),
+            )
+            fig.add_shape(
+                type="line", 
+                x0=end, x1=end,
+                y0=0, y1=1,
+                yref="paper",
+                line=dict(color=color, width=1, dash='dot'),
+            )
+            
+            # Add session boundary time labels
+            fig.add_annotation(
+                x=start, y=0.02, yref="paper",
+                text=start.strftime('%H:%M'), showarrow=False,
+                font=dict(size=10, color=color),
+                bgcolor=f"rgba{(*[int(color[i:i+2], 16) for i in (1, 3, 5)], 0.3)}",
+                bordercolor=color,
+                borderwidth=1
+            )
+            fig.add_annotation(
+                x=end, y=0.02, yref="paper",
+                text=end.strftime('%H:%M'), showarrow=False,
+                font=dict(size=10, color=color),
+                bgcolor=f"rgba{(*[int(color[i:i+2], 16) for i in (1, 3, 5)], 0.3)}",
+                bordercolor=color,
+                borderwidth=1
+            )
+            
+            # Add session label at midpoint
+            mid_time = start + (end - start) / 2
+            fig.add_annotation(
+                x=mid_time,
+                y=1.02,
+                yref="paper",
+                text=label,
+                showarrow=False,
+                font=dict(size=9, color=color),
+                bgcolor=f"rgba{(*[int(color[i:i+2], 16) for i in (1, 3, 5)], 0.3)}",
+                bordercolor=color,
+                borderwidth=1
+            )
+        
+        # === LAYOUT CONFIGURATION ===
+        fig.update_layout(
+            title=dict(
+                text=f"🎯 {symbol} Live Candlestick Chart - {today}<br>",
+                x=0.5,
+                xanchor='center',
+                font=dict(size=16, color='white', family='Arial')
+            ),
+            
+            # Main price chart formatting
+            xaxis=dict(
+                title='',
+                range=[animation_start, animation_end],  # Default 2h zoom window
+                type='date',
+                showgrid=True,
+                gridcolor='#2C3E50',
+                tickangle=0,
+                tickfont=dict(color='white'),
+                rangeslider=dict(visible=False),  # Disable range slider for cleaner look
+                rangeselector=dict(
+                    buttons=[
+                        dict(count=30, label="30m", step="minute", stepmode="backward"),
+                        dict(count=1, label="1h", step="hour", stepmode="backward"),
+                        dict(count=2, label="2h", step="hour", stepmode="backward")
+                    ],
+                    x=0, y=1.02, xanchor='left',
+                    bgcolor='#34495E',
+                    bordercolor='#5D6D7E',
+                    font=dict(color='white')
+                )
+            ),
+            
+            # Volume chart formatting  
+            xaxis2=dict(
+                title='🕐 Time',
+                type='date',
+                showgrid=True,
+                gridcolor='#2C3E50',
+                tickformat='%H:%M',
+                title_font=dict(color='white'),
+                tickfont=dict(color='white')
+            ),
+            
+            yaxis=dict(
+                title='💰 Price (VND)',
+                showgrid=True,
+                gridcolor='#2C3E50',
+                tickformat=',.0f',
+                side='right',
+                title_font=dict(color='white'),
+                tickfont=dict(color='white')
+            ),
+            
+            yaxis2=dict(
+                title='📊 Volume',
+                showgrid=True,
+                gridcolor='#2C3E50',
+                tickformat=',.0f',
+                title_font=dict(color='white'),
+                tickfont=dict(color='white')
+            ),
+            
+            plot_bgcolor='#1C1C1C',
+            paper_bgcolor='#0E0E0E',
+            height=700,
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right", 
+                x=1,
+                bgcolor='rgba(52,73,94,0.8)',
+                bordercolor='#5D6D7E',
+                font=dict(color='white')
+            ),
+            margin=dict(l=80, r=80, t=120, b=80),
+            
+            # Remove watermark and improve hover
+            hovermode='x unified',
+            hoverlabel=dict(
+                bgcolor='#34495E',
+                bordercolor='#5D6D7E', 
+                font=dict(color='white')
+            )
+        )
+        
+        # === STATUS INFO ===
+        latest_price = ohlc_data['Close'].iloc[-1]
+        latest_volume = ohlc_data['Volume'].iloc[-1]
+        total_volume = ohlc_data['Volume'].sum()
+        avg_price = ohlc_data['Close'].mean()
+        price_range = f"{ohlc_data['Low'].min():,.0f} - {ohlc_data['High'].max():,.0f}"
+        
+        fig.add_annotation(
+            text=(
+                f"📈 Current: {latest_price:,.0f} VND | "
+                f"📊 Volume: {latest_volume:,.0f} | " 
+                f"🔄 Total Vol: {total_volume:,.0f}<br>"
+                f"📉 Day Range: {price_range} VND | "
+                f"⚖️ Average: {avg_price:,.0f} VND | "
+                f"🎯 Data Points: {len(ohlc_data)}"
+            ),
+            xref="paper", yref="paper",
+            x=0.5, y=-0.15,
+            showarrow=False,
+            font=dict(size=11, color='white'),
+            bgcolor='rgba(52,73,94,0.8)',
+            bordercolor='#5D6D7E',
+            borderwidth=1
         )
         
         return fig
         
     except Exception as e:
-        st.error(f"Error creating live chart: {e}")
+        st.error(f"Error creating candlestick chart: {e}")
+        st.exception(e)
         return None
 
 
@@ -1414,44 +1611,42 @@ def main():
                     st.error(f"❌ Connection failed: {str(e)[:50]}...")  # Clean error message
         
         with kafka_tab2:
-            # Live intraday chart
-            st.write("### 📈 Live Intraday Chart")
+            # Live animation chart
+            st.write("### 🎬 Live Animation Chart")
             
             # Chart controls
             col1, col2, col3 = st.columns(3)
             with col1:
-                interval = st.selectbox(
-                    "Interval:",
-                    options=['1m', '5m', '15m', '30m', '1H'],
-                    index=1,
-                    key="intraday_interval"
-                )
+                auto_refresh = st.checkbox("🔄 Auto Animation", value=True, key="auto_refresh_animation")
             with col2:
-                show_prediction = st.checkbox("🤖 AI Prediction", value=True, key="show_ai_prediction")
+                refresh_rate = st.selectbox(
+                    "Refresh Rate:",
+                    options=[30, 60, 120],
+                    index=1,
+                    format_func=lambda x: f"{x}s",
+                    key="animation_refresh_rate"
+                )
             with col3:
-                auto_refresh = st.checkbox("🔄 Auto Refresh", value=True, key="auto_refresh_chart")
+                st.metric("⏰ Current Time", datetime.now().strftime('%H:%M:%S'))
             
             # Create and display live chart
             with st.spinner("🕰️ Loading live intraday data..."):
                 live_chart = create_live_intraday_chart(symbol, analyzer)
                 
                 if live_chart:
-                    st.plotly_chart(live_chart, width='content')
-                    
-                    # Chart info
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("�️ Market Status", "Open" if 9 <= datetime.now().hour < 15 else "Closed")
-                    with col2:
-                        st.metric("⏰ Current Time", datetime.now().strftime('%H:%M:%S'))
-                    with col3:
-                        st.metric("🎯 Interval", interval)
-                    
-                    # Chart features info
-                    st.info("💡 **Chart Features**: 🕯️ Candlestick patterns, ⏰ Market hours markers, 🤖 AI prediction line (red dotted), 📅 Future gap for price projection")
-                    
+                    st.plotly_chart(live_chart, width='stretch')
+                
                 else:
                     st.warning("⚠️ Unable to load live chart. Try again during market hours (9:00-15:00)")
+            
+            # 🔥 AUTO-REFRESH LOGIC for realtime updates
+            if auto_refresh:
+                time.sleep(refresh_rate)
+                st.rerun()
+            else:
+                # Manual refresh button for static mode
+                if st.button("🔄 Manual Refresh", key="manual_refresh_button", type="primary"):
+                    st.rerun()
         
         st.markdown("---")
     
