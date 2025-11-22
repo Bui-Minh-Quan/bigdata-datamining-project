@@ -15,9 +15,12 @@ import queue
 import time
 import traceback
 import random
+import math
 from kafka import KafkaConsumer
 from neo4j import GraphDatabase
 from vnstock import Quote
+from pymongo import MongoClient
+import networkx as nx
 
 # Page configuration - disable animation
 st.set_page_config(
@@ -436,11 +439,243 @@ def process_kafka_data():
                 break
 
 # Import for network graph
-import networkx as nx
 from plotly.graph_objects import Figure, Scatter
 import plotly.graph_objects as go
-import math
-import random
+
+# ==========================================
+# MONGODB & AI PREDICTION FUNCTIONS
+# ==========================================
+@st.cache_resource
+def init_mongo():
+    try:
+        return MongoClient("mongodb://localhost:27017/")['bigdata_trr']
+    except:
+        return None
+
+def get_ai_prediction(symbol):
+    """Get AI prediction from MongoDB"""
+    db = init_mongo()
+    if db is None:
+        return None
+    return db['stock_predictions'].find_one(
+        {"symbol": symbol}, 
+        sort=[("date", -1), ("created_at", -1)]
+    )
+
+def get_news(symbol):
+    """Get news from MongoDB"""
+    db = init_mongo()
+    if db is None:
+        return []
+    return list(db['summarized_news'].find(
+        {"stockCodes": symbol}
+    ).sort("date", -1).limit(10))
+
+def get_neo4j_data_advanced(symbol):
+    """
+    Query lấy dữ liệu đồ thị mở rộng (1-2 hops) để thấy tác động gián tiếp.
+    Lấy đầy đủ thuộc tính impact, description, title, name.
+    """
+    try:
+        driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password123"))
+        with driver.session() as session:
+            q = """
+            MATCH (s:Stock {name: $sym})
+            MATCH path = (s)-[*1..2]-(n)
+            UNWIND relationships(path) as r
+            WITH startNode(r) as source, endNode(r) as target, r
+            RETURN DISTINCT
+                source.name as src_name, labels(source) as src_labels, source.title as src_title,
+                target.name as tgt_name, labels(target) as tgt_labels, target.title as tgt_title,
+                type(r) as rel_type, 
+                r.impact as impact, 
+                r.description as description, 
+                r.date as date
+            LIMIT 50
+            """
+            return session.run(q, sym=symbol).data()
+    except Exception as e:
+        print(f"Neo4j Error: {e}")
+        return []
+
+def shorten_text(text, max_len=20):
+    """Shorten text for graph labels"""
+    if not text:
+        return "Unknown"
+    return text[:max_len] + "..." if len(text) > max_len else text
+
+def create_advanced_network_graph(data, center_node_id):
+    """
+    Create advanced directed graph with arrowheads, impact coloring
+    """
+    if not data:
+        return None
+
+    G = nx.DiGraph()  # Đồ thị có hướng
+    
+    # Màu sắc Node
+    node_colors_map = {
+        'Stock': '#FF4B4B',      # Đỏ đậm
+        'Article': '#1E90FF',    # Xanh dương
+        'Entity': '#2E8B57',     # Xanh lá
+        'Unknown': '#808080'
+    }
+    
+    # Màu sắc Edge (Impact)
+    edge_colors_map = {
+        'POSITIVE': '#00CC00',   # Xanh lá tươi
+        'NEGATIVE': '#FF0000',   # Đỏ tươi
+        'RELATED': '#AAAAAA'     # Xám
+    }
+
+    # 1. Xây dựng Graph từ Data
+    for item in data:
+        # Xử lý Source Node
+        src_labels = item.get('src_labels', [])
+        src_type = 'Article' if 'Article' in src_labels else ('Stock' if 'Stock' in src_labels else 'Entity')
+        src_name = item.get('src_title') if src_type == 'Article' else item.get('src_name')
+        if not src_name:
+            src_name = "Unknown"
+        
+        # Xử lý Target Node
+        tgt_labels = item.get('tgt_labels', [])
+        tgt_type = 'Article' if 'Article' in tgt_labels else ('Stock' if 'Stock' in tgt_labels else 'Entity')
+        tgt_name = item.get('tgt_title') if tgt_type == 'Article' else item.get('tgt_name')
+        if not tgt_name:
+            tgt_name = "Unknown"
+        
+        # Xử lý Edge
+        impact = item.get('impact', 'RELATED')
+        if not impact:
+            impact = 'RELATED'
+        desc = item.get('description', '')
+        date = item.get('date', '')
+        
+        # Add Nodes
+        G.add_node(src_name, type=src_type, color=node_colors_map.get(src_type, '#888'), full_name=src_name)
+        G.add_node(tgt_name, type=tgt_type, color=node_colors_map.get(tgt_type, '#888'), full_name=tgt_name)
+        
+        # Add Edge (có hướng)
+        G.add_edge(src_name, tgt_name, 
+                   color=edge_colors_map.get(impact, '#888'),
+                   desc=f"[{impact}] {desc} ({date})")
+
+    # 2. Tính toán Layout
+    pos = nx.spring_layout(G, k=0.7, iterations=60, seed=42)
+
+    # 3. Vẽ Edges
+    edge_traces = []
+    for edge in G.edges(data=True):
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        color = edge[2]['color']
+        desc = edge[2]['desc']
+        
+        trace = go.Scatter(
+            x=[x0, x1, None], y=[y0, y1, None],
+            line=dict(width=1.5, color=color),
+            hoverinfo='text',
+            text=[desc, desc, ""],
+            mode='lines',
+            opacity=0.8,
+            showlegend=False
+        )
+        edge_traces.append(trace)
+
+    # 4. Vẽ Nodes
+    node_x, node_y, node_text, node_colors, node_sizes, node_labels = [], [], [], [], [], []
+    
+    for node in G.nodes(data=True):
+        x, y = pos[node[0]]
+        node_x.append(x)
+        node_y.append(y)
+        
+        n_type = node[1].get('type', 'Unknown')
+        full_name = node[1].get('full_name', '')
+        
+        # Label hiển thị trên đồ thị (ngắn gọn)
+        label_show = shorten_text(full_name, 25) if n_type == 'Article' else full_name
+        node_labels.append(label_show)
+        
+        # Tooltip (chi tiết)
+        hover_str = f"<b>{full_name}</b><br>Type: {n_type}"
+        node_text.append(hover_str)
+        
+        node_colors.append(node[1].get('color', '#888'))
+        # Node trung tâm (Stock) to hơn
+        size = 40 if n_type == 'Stock' else (25 if n_type == 'Entity' else 20)
+        node_sizes.append(size)
+
+    node_trace = go.Scatter(
+        x=node_x, y=node_y,
+        mode='markers+text',
+        text=node_labels,
+        textposition="bottom center",
+        hoverinfo='text',
+        hovertext=node_text,
+        marker=dict(
+            showscale=False, 
+            color=node_colors, 
+            size=node_sizes, 
+            line_width=2, 
+            line_color='white'
+        ),
+        textfont=dict(size=10, color='#333')
+    )
+
+    # 5. Tạo Mũi tên (Annotations)
+    annotations = []
+    for edge in G.edges(data=True):
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        color = edge[2]['color']
+        
+        # Tính toán điểm để mũi tên không bị node che khuất
+        dx = x1 - x0
+        dy = y1 - y0
+        length = math.sqrt(dx*dx + dy*dy)
+        if length == 0:
+            length = 1
+        
+        offset = 0.04 
+        new_x1 = x1 - (dx / length) * offset
+        new_y1 = y1 - (dy / length) * offset
+        
+        annotations.append(dict(
+            ax=x0, ay=y0, axref='x', ayref='y',
+            x=new_x1, y=new_y1, xref='x', yref='y',
+            showarrow=True,
+            arrowhead=2,
+            arrowsize=1.5,
+            arrowwidth=1.5,
+            arrowcolor=color,
+            opacity=0.9
+        ))
+
+    # 6. Tạo Layout
+    fig = go.Figure(
+        data=edge_traces + [node_trace],
+        layout=go.Layout(
+            title=dict(text=f"🔗 Mạng lưới tác động của {center_node_id}", font=dict(size=16)),
+            showlegend=False,
+            hovermode='closest',
+            margin=dict(b=20, l=5, r=5, t=40),
+            annotations=annotations,
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            height=700, 
+            plot_bgcolor='white'
+        )
+    )
+    
+    # Legend
+    fig.add_annotation(
+        text="🔴: Stock | 🔵: Article | 🟢: Entity<br>Lines: 🟢 Positive | 🔴 Negative", 
+        align='left', showarrow=False, xref='paper', yref='paper', x=0, y=1, 
+        bordercolor='black', borderwidth=1, bgcolor='white', opacity=0.8
+    )
+
+    return fig
 
 # Neo4j Connection
 class Neo4jConnection:
@@ -1716,8 +1951,19 @@ def main():
     if show_kafka:
         st.subheader("📡 Kafka Real-time Data Stream")
         
-        # Create tabs for Kafka section
-        kafka_tab1, kafka_tab2 = st.tabs(["📊 Live Feed", "📈 Live Chart"])
+        # Get AI prediction and news data
+        ai_pred = get_ai_prediction(symbol)
+        news_list = get_news(symbol)
+        neo4j_data = get_neo4j_data_advanced(symbol)
+        
+        # Create tabs for Kafka section with AI, News, Graph
+        kafka_tab1, kafka_tab2, kafka_tab3, kafka_tab4, kafka_tab5 = st.tabs([
+            "📊 Live Feed", 
+            "📈 Live Chart", 
+            "🧠 AI Prediction",
+            "📰 News",
+            "🔗 Knowledge Graph"
+        ])
         
         with kafka_tab1:
             st.write("### 📊 Live Data Feed (Animated)")
@@ -1751,15 +1997,29 @@ def main():
                         </div>
                         """, unsafe_allow_html=True)
                 
-                # Status info below
+                # Status info below with AI prediction
                 st.markdown("---")
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("📊 Active Symbols", len(st.session_state.kafka_data))
                 with col2:
                     st.metric("⏱️ Status", "🟢 Live" if st.session_state.consumer_running else "🔴 Offline")
                 with col3:
                     st.metric("🕐 Updated", datetime.now().strftime('%H:%M:%S'))
+                with col4:
+                    # AI Prediction in Live Feed
+                    if ai_pred:
+                        trend = ai_pred.get('trend', 'UNKNOWN')
+                        trend_map = {
+                            "INCREASE": ("🟢 TĂNG", "normal"), 
+                            "DECREASE": ("🔴 GIẢM", "inverse"), 
+                            "SIDEWAYS": ("🟡 NGANG", "off"), 
+                            "UNKNOWN": ("⚪ CHƯA RÕ", "off")
+                        }
+                        t_text, t_delta = trend_map.get(trend, trend_map["UNKNOWN"])
+                        st.metric("🤖 AI Dự báo", t_text)
+                    else:
+                        st.metric("🤖 AI Dự báo", "⚪ N/A")
                     
             else:
                 st.info("🟡 Waiting for Kafka data...")
@@ -1792,6 +2052,8 @@ def main():
             with col1:
                 auto_refresh = st.checkbox("🔄 Auto Animation", value=True, key="auto_refresh_animation")
             with col2:
+                st.write("⏰ Reload every 10s")
+            with col3:
                 st.metric("⏰ Current Time", datetime.now().strftime('%H:%M:%S'))
             
             # Create and display live chart
@@ -1802,15 +2064,81 @@ def main():
                     st.plotly_chart(live_chart, width='stretch')
                 else:
                     st.warning("⚠️ Unable to load live chart. Try again during market hours (9:00-15:00)")
-            
-            # 🔥 AUTO-REFRESH LOGIC for realtime updates
-            if auto_refresh:
-                time.sleep(10)
-                st.rerun()
-            else:
-                # Manual refresh button for static mode
-                if st.button("🔄 Manual Refresh", key="manual_refresh_button", type="primary"):
+                # Auto reload every 10s if auto_refresh is enabled
+                if auto_refresh:
+                    time.sleep(10)
                     st.rerun()
+        
+        with kafka_tab3:
+            # AI Prediction Tab
+            st.write("### 🧠 AI Analysis & Prediction")
+            
+            if ai_pred:
+                trend = ai_pred.get('trend', 'UNKNOWN')
+                trend_map = {
+                    "INCREASE": ("🟢 TĂNG TRƯỞNG", "normal"), 
+                    "DECREASE": ("🔴 GIẢM GIÁ", "inverse"), 
+                    "SIDEWAYS": ("🟡 ĐI NGANG", "off"), 
+                    "UNKNOWN": ("⚪ CHƯA RÕ", "off")
+                }
+                t_text, t_delta = trend_map.get(trend, trend_map["UNKNOWN"])
+                
+                st.subheader(f"Nhận định cho {symbol}")
+                st.caption(f"📅 Ngày: {ai_pred.get('date')} | 🎯 Tin cậy: {ai_pred.get('confidence')}")
+                
+                reason = ai_pred.get('reasoning', '').replace("- ", "\n- ")
+                if trend == "INCREASE":
+                    st.success(f"**{t_text}**\n\n{reason}")
+                elif trend == "DECREASE":
+                    st.error(f"**{t_text}**\n\n{reason}")
+                else:
+                    st.warning(f"**{t_text}**\n\n{reason}")
+                
+                with st.expander("📄 Phân tích chi tiết"):
+                    st.code(ai_pred.get('full_analysis', 'N/A'))
+            else:
+                st.info("🤖 Chưa có dữ liệu phân tích AI. Chạy AI prediction để cập nhật.")
+        
+        with kafka_tab4:
+            # News Tab
+            st.write("### 📰 Tin tức & Sự kiện")
+            
+            if news_list:
+                st.write(f"📋 Tìm thấy {len(news_list)} tin mới nhất:")
+                for i, n in enumerate(news_list):
+                    with st.expander(f"**{n.get('date')} | {n.get('title', 'Bản tin')}**", expanded=False):
+                        st.write(n.get('description') or n.get('summary'))
+                        if n.get('originalContent'):
+                            st.caption("📝 Nội dung gốc:")
+                            st.text(n.get('originalContent')[:500] + "...")
+                        st.divider()
+            else:
+                st.info(f"📭 Hiện chưa có tin tức nào cho {symbol}.")
+        
+        with kafka_tab5:
+            # Knowledge Graph Tab
+            st.write("### 🔗 Knowledge Graph - Mạng lưới tác động")
+            
+            if neo4j_data:
+                g_col1, g_col2 = st.columns([4, 1])
+                
+                with g_col1:
+                    fig_net = create_advanced_network_graph(neo4j_data, symbol)
+                    if fig_net:
+                        st.plotly_chart(fig_net, use_container_width=True)
+                
+                with g_col2:
+                    st.info("💡 **Chú thích:**")
+                    st.markdown("🔴 **Stock**: Cổ phiếu")
+                    st.markdown("🔵 **Article**: Tin tức")
+                    st.markdown("🟢 **Entity**: Thực thể")
+                    st.divider()
+                    st.markdown("**Đường nối:**")
+                    st.markdown("<span style='color:#00CC00'>━━</span> Tích cực", unsafe_allow_html=True)
+                    st.markdown("<span style='color:#FF0000'>━━</span> Tiêu cực", unsafe_allow_html=True)
+                    st.markdown("<span style='color:#AAAAAA'>━━</span> Liên quan", unsafe_allow_html=True)
+            else:
+                st.warning("🔌 Không có dữ liệu đồ thị. Kiểm tra kết nối Neo4j.")
         
         st.markdown("---")
     
