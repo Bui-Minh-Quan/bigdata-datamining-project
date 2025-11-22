@@ -194,6 +194,8 @@ class StockPredictor:
         }
         
         # Get LLM chain
+        # print prompt_inputs for debugging
+        print(PREDICTION_PROMPT.format(**prompt_inputs))
         try:
             response = invoke_chain_with_retry(
                 PREDICTION_PROMPT,
@@ -211,9 +213,14 @@ if __name__ == "__main__":
     predictor = StockPredictor()
     
     # test get recent prices
-    prices = predictor.get_recent_prices("GAS")
-    sentiments = predictor.get_social_sentiment(ticker="GAS")
-    print("Recent prices for GAS:", prices)
-    print("Social sentiment for GAS:", sentiments)
+    prices = predictor.get_recent_prices("VCB")
+    sentiments = predictor.get_social_sentiment(ticker="VCB")
+
+    print("Recent prices for VCB:", prices)
+    print("Social sentiment for VCB:", sentiments)
+    # test prediction
+    graph_context = "VCB liên quan đến việc Ngân hàng Nhà nước điều chỉnh lãi suất cơ bản, ảnh hưởng đến toàn ngành ngân hàng."
+    prediction = predictor.predict(ticker="VCB", graph_context=graph_context)
+    print("Prediction for VCB:\n", prediction)
 
         

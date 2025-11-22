@@ -461,9 +461,9 @@ def process_article_batch(articles_batch, G, canonical_entities, api_manager):
         index_map[simulated_id] = article
         
         title = article.get("title", "Không có tiêu đề")
-        description = article.get("description") or article.get("summary") or ""
-        if not description and article.get("content"):
-             description = article.get("content")[:200] + "..."
+        description = article.get("originalContent") or article.get("description") or ""
+        if not description and article.get("originalContent"):
+             description = article.get("originalContent")
              
         batch_content += f"[ID: {simulated_id}] Tiêu đề: {title} | Nội dung: {description}\n\n"
         
@@ -587,7 +587,7 @@ def build_daily_knowledge_graph(target_date):
     print(f"Building knowledge graph for date: {target_date}")
     
     # 1. Get summarized articles in target date from mongoDB
-    cursor = db['summarized_news'].find({"date": target_date})
+    cursor = db['news'].find({"date": target_date})
     articles = list(cursor)
     articles = articles[:20]  # Limit to first 20 articles for performance during testing
     
@@ -619,11 +619,13 @@ def build_daily_knowledge_graph(target_date):
     print(f"Knowledge graph construction completed. Total nodes: {G.number_of_nodes()}, Total edges: {G.number_of_edges()}")
     return G
 
-def build_daily_knowledge_graph_batch(target_date):
+def build_daily_knowledge_graph_batch(target_date=None):
     """ 
-    Input: Target date to build knowledge graph (YYYY-MM-DD)
+    Input: Target date to build knowledge graph (YYYY-MM-DD HH:MM:SS)
     Output: networkx graph object
     """
+    if target_date is None:
+        target_date = datetime.now().strftime("%Y-%m-%d 00:00:00")
     print(f"Building knowledge graph for date: {target_date}")
     
     # 1. Get summarized articles in target date from mongoDB
@@ -660,7 +662,7 @@ if __name__ == "__main__":
     # G = build_daily_knowledge_graph("2025-11-19 00:00:00")
     # print("Sample nodes:", list(G.nodes(data=True))[:5])
     
-    G = build_daily_knowledge_graph_batch("2025-11-19 00:00:00")
+    G = build_daily_knowledge_graph_batch()
     # print("Sample nodes:", list(G.nodes(data=True))[:5])
     if G.number_of_nodes() > 0:
         try:

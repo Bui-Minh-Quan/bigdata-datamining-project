@@ -7,11 +7,15 @@ Visualization:
 - 2-Hop Neighbor Search.
 """
 import streamlit as st
+import threading
 import pandas as pd
 import plotly.graph_objects as go
 import networkx as nx
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
+import importlib
+import warnings
+from streamlit.runtime.scriptrunner import add_script_run_ctx
 
 import json
 import threading
@@ -20,6 +24,14 @@ import time
 import sys
 import os
 import math
+
+os.environ["PYTHONWARNINGS"] = "ignore"
+
+# 2. Tắt warning ở mức Python
+warnings.filterwarnings("ignore")
+warnings.simplefilter(action='ignore', category=FutureWarning)
+warnings.simplefilter(action='ignore', category=UserWarning)
+warnings.simplefilter(action='ignore', category=DeprecationWarning)
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(ROOT_DIR)
@@ -93,8 +105,6 @@ def get_ai_prediction(symbol):
 def get_news(symbol):
     db = init_mongo()
     if db is None: return []
-    # taggedSymbols is a list field, ex: ["FPT", "SSI"]
-    # Lấy 10 tin mới nhất liên quan đến symbol (theo taggedSymbols)
     return list(db['news'].find({"taggedSymbols": symbol, "date": {"$exists": True}}).sort("date", -1).limit(10))
 
 def get_neo4j_data(symbol):
@@ -338,31 +348,83 @@ def create_chart(df, symbol):
     return fig
 
 def main():
+    warnings.filterwarnings("ignore")
+    warnings.simplefilter(action='ignore', category=FutureWarning)
+    warnings.simplefilter(action='ignore', category=UserWarning)
+    warnings.simplefilter(action='ignore', category=DeprecationWarning)
+    
     st.title("📈 Vietnam Stock AI Dashboard")
     
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    try: from main import run_full_pipeline
+    try: 
+        import main as pipeline_module
+        importlib.reload(pipeline_module)
+        run_full_pipeline = pipeline_module.run_full_pipeline
     except ImportError: run_full_pipeline = None
-
+    
+    # --- [GEMINI EDIT START]: TRẠNG THÁI AI ---
+    # Khởi tạo các biến trong session_state để theo dõi tiến trình chạy ngầm
+    if "ai_is_running" not in st.session_state: st.session_state.ai_is_running = False
+    if "ai_log" not in st.session_state: st.session_state.ai_log = ""
+    if "ai_progress" not in st.session_state: st.session_state.ai_progress = 0
+    
+    # Danh sách các bước để hiển thị icon (Checklist)
+    
+    # Function to run AI pipeline in background thread
+    def run_ai_background():
+        try:
+            def thread_callback(msg, pct):
+                st.session_state.ai_log = msg 
+                st.session_state.ai_progress = pct 
+            
+            # run heavy function
+            run_full_pipeline(datetime.now().strftime("%Y-%m-%d"), progress_callback=thread_callback)
+            # when finished running 
+            st.session_state.ai_log = "✅ Hoàn tất! Vui lòng đợi làm mới..."
+            st.session_state.ai_progress = 100
+            time.sleep(1)
+            st.session_state.ai_is_running = False
+            
+        except Exception as e:
+            st.session_state.ai_log = f"❌ Lỗi: {str(e)}"
+            st.session_state.ai_is_running = False
+    
     st.sidebar.header("Cấu hình")
     st.sidebar.subheader("🤖 AI Analyst")
-    if st.sidebar.button("⚡ Dự đoán xu hướng", type="primary", key="btn_predict"):
-        if run_full_pipeline is None: st.sidebar.error("Không tìm thấy file main.py!")
-        else:
-            progress_bar = st.sidebar.progress(0)
-            status_text = st.sidebar.empty()
-            def update_ui(msg, pct): progress_bar.progress(pct); status_text.text(msg)
-            try:
-                with st.spinner("Đang phân tích..."):
-                    run_full_pipeline(datetime.now().strftime("%Y-%m-%d"), progress_callback=update_ui)
-                st.sidebar.success("Hoàn tất!"); time.sleep(1); st.rerun()
-            except Exception as e: st.sidebar.error(f"Lỗi: {e}")
+    
+    # Logic visualize when clock the button 
+    if st.session_state.ai_is_running:
+        # Hiển thị thanh loading
+        st.sidebar.progress(st.session_state.ai_progress)
+        
+        # Hiển thị Timeline (Các bước chạy)
+        current_pct = st.session_state.ai_progress
+        
+        st.sidebar.caption(f"{st.session_state.ai_log}")
+        
+        
+    
+    else:
+        if st.sidebar.button("⚡ Dự đoán xu hướng", type="primary", key="btn_predict"):
+            if run_full_pipeline is None:
+                st.sidebar.error("Không tìm thấy file main.py!")
+            else:
+                # Start a new thread
+                st.session_state.ai_is_running = True
+                st.session_state.ai_progress = 0
+                st.session_state.ai_log = "Đang chạy dự đoán"
+                
+                t = threading.Thread(target=run_ai_background)
+                add_script_run_ctx(t)
+                t.start()
+                st.rerun() # Làm mới ngay để hiện thanh loading
 
+    # --- [GEMINI EDIT END] ---
     st.sidebar.divider()
     stock_choice = st.sidebar.selectbox("Mã Cổ Phiếu", list(VIETNAM_STOCKS.keys()))
     symbol = VIETNAM_STOCKS[stock_choice]
     
-    k_status = "🟢 Kết nối tốt" if st.session_state.kafka_data else "🟡 Đang đợi..."
+    k_status = "🟢 Kết nối tốt" if st.session_state.kafka_data else "Kết nối"
     if not KAFKA_AVAILABLE: k_status = "🔴 Lỗi thư viện Kafka"
     st.sidebar.info(f"Real-time Stream: {k_status}")
     
@@ -411,7 +473,7 @@ def main():
         else: ai_cont.info("Chưa có dữ liệu phân tích. Bấm nút 'Dự đoán xu hướng' bên trái để chạy.")
 
     with t2:
-        if not history_df.empty: st.plotly_chart(create_chart(history_df, symbol), width="stretch"); st.caption(f"Nguồn: {data_source}")
+        if not history_df.empty: st.plotly_chart(create_chart(history_df, symbol), use_container_width=True); st.caption(f"Nguồn: {data_source}")
         else: st.warning("Chưa có dữ liệu giá.")
 
     with t3:
@@ -432,7 +494,7 @@ def main():
         if rels:
             g_col1, g_col2 = st.columns([4, 1])
             fig_net = create_network_graph(rels, symbol)
-            with g_col1: st.plotly_chart(fig_net, width="stretch", height=700)
+            with g_col1: st.plotly_chart(fig_net, use_container_width=True)
             with g_col2:
                 st.info("💡 **Chú thích:**")
                 st.markdown("🔴 **Stock**: Cổ phiếu")
@@ -448,4 +510,6 @@ def main():
     st.rerun()
 
 if __name__ == "__main__":
+    warnings.filterwarnings("ignore")
+    os.environ["PYTHONWARNINGS"] = "ignore"
     main()
