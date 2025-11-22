@@ -145,8 +145,10 @@ def run_full_pipeline(target_date_input=None, progress_callback=None):
     results = {}
     
     for ticker in PORTFOLIO_STOCKS:
-        prediction = predictor.predict(ticker, target_date_str, graph_context)
+        prediction = predictor.predict(ticker=ticker, graph_context=graph_context, target_date=target_date_str)
         results[ticker] = prediction
+        print(f"Prediction for {ticker}:\n{prediction}\n{'-'*30}\n")
+        
         # time.sleep(1) # Giảm delay để nhanh hơn
 
     # BƯỚC 6: LƯU KẾT QUẢ

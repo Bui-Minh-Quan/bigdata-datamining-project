@@ -6,6 +6,7 @@ sys.path.append(ROOT_DIR)
 
 import pandas as pd 
 from langchain.prompts import PromptTemplate
+from datetime import datetime, timedelta
 from database.db import get_database
 try:
     from etl.graph_loader import GraphLoader
@@ -57,11 +58,44 @@ class StockPredictor:
         self.db = get_database()
         self.api_manager = APIKeyManager()
         
-    def get_social_sentiment(self, target_date, ticker):
+    def get_social_sentiment(self, ticker, target_date=None):
+        if target_date is None:
+            target_date = datetime.today().strftime("%Y-%m-%d")
         sentiemnt_col = self.db["sentiment_from_posts"]
         
         # query based on target_date and target stock ticker
         doc = sentiemnt_col.find_one({"date": target_date, "taggedSymbols": ticker})
+        
+        # while doc is None, try previous date (max 7 days back)
+        while doc is None:
+            initial_target_date = target_date
+            target_dt = datetime.strptime(target_date, "%Y-%m-%d") - timedelta(days=1)
+            target_date = str(target_dt.date())
+            doc = sentiemnt_col.find_one({"date": target_date, "taggedSymbols": ticker})
+            # stop if more than 7 days back
+            if (datetime.strptime(initial_target_date, "%Y-%m-%d") - target_dt).days > 7:
+                print(f"⚠️ Không tìm thấy dữ liệu tâm lý xã hội cho {ticker} trong vòng 7 ngày trước {initial_target_date}")
+                return None
+
+        # If target date has too limited number of posts, sum up with previous date
+        if doc and doc.get("total_posts", 0) < 10:
+            prev_target_dt = datetime.strptime(target_date, "%Y-%m-%d") - timedelta(days=1)
+            prev_target_date = str(prev_target_dt.date())
+            prev_doc = sentiemnt_col.find_one({"date": prev_target_date, "taggedSymbols": ticker})
+            if prev_doc:
+                doc["positive_posts"] = doc.get("positive_posts", 0) + prev_doc.get("positive_posts", 0)
+                doc["negative_posts"] = doc.get("negative_posts", 0) + prev_doc.get("negative_posts", 0)
+                doc["neutral_posts"] = doc.get("neutral_posts", 0) + prev_doc.get("neutral_posts", 0)
+                doc["total_posts"] = doc.get("total_posts", 0) + prev_doc.get("total_posts", 0)
+            
+            print(f"⚠️ Dữ liệu tâm lý xã hội cho {ticker} vào {target_date} quá ít, đã tổng hợp với ngày {prev_target_date}")
+            return {
+                "positive_posts": doc.get("positive_posts", 0),
+                "negative_posts": doc.get("negative_posts", 0),
+                "neutral_posts": doc.get("neutral_posts", 0),
+                "total_posts": doc.get("total_posts", 0)
+                }
+        
         if doc:
             return {
                 "positive_posts": doc.get("positive_posts", 0),
@@ -70,7 +104,9 @@ class StockPredictor:
                 "total_posts": doc.get("total_posts", 0),
             }
     
-    def get_recent_prices(self, ticker, target_date, days=5):
+    def get_recent_prices(self, ticker, target_date=None, days=5):
+        if target_date is None:
+            target_date = datetime.today().strftime("%Y-%m-%d")
         prices_col = self.db["stock_price_data"]
         
         # 1. Chuẩn bị mốc thời gian
@@ -126,9 +162,12 @@ class StockPredictor:
         
         return final_prices
     
-    def predict(self, ticker, target_date, graph_context, recent_prices=None):
+    def predict(self, ticker, graph_context,target_date=None, recent_prices=None):
         # Prepare social sentiment data
-        sentiment_data = self.get_social_sentiment(target_date, ticker)
+        sentiment_data = self.get_social_sentiment(ticker, target_date)
+        if not target_date:
+            target_date = datetime.today().strftime("%Y-%m-%d")
+        
         if not sentiment_data:
             print(f"No sentiment data for {ticker} on {target_date}")
             sentiment_data = {
@@ -172,6 +211,9 @@ if __name__ == "__main__":
     predictor = StockPredictor()
     
     # test get recent prices
-    prices = predictor.get_recent_prices("GVR", "2025-11-18")
-    print("Recent prices for AAPL:", prices)
+    prices = predictor.get_recent_prices("GAS")
+    sentiments = predictor.get_social_sentiment(ticker="GAS")
+    print("Recent prices for GAS:", prices)
+    print("Social sentiment for GAS:", sentiments)
+
         

@@ -93,7 +93,9 @@ def get_ai_prediction(symbol):
 def get_news(symbol):
     db = init_mongo()
     if db is None: return []
-    return list(db['summarized_news'].find({"stockCodes": symbol}).sort("date", -1).limit(10))
+    # taggedSymbols is a list field, ex: ["FPT", "SSI"]
+    # Lấy 10 tin mới nhất liên quan đến symbol (theo taggedSymbols)
+    return list(db['news'].find({"taggedSymbols": symbol, "date": {"$exists": True}}).sort("date", -1).limit(10))
 
 def get_neo4j_data(symbol):
     """
@@ -420,8 +422,8 @@ def main():
                 for i, n in enumerate(news_list):
                     key = f"news_{symbol}_{i}_{n.get('postID', 'no_id')}"
                     with st.expander(f"**{n.get('date')} | {n.get('title', 'Bản tin')}**", expanded=False):
-                        st.write(n.get('description') or n.get('summary'))
-                        if n.get('originalContent'): st.caption("Nội dung gốc:"); st.text(n.get('originalContent')[:500] + "...")
+                        st.write(n.get('description') or "Không có mô tả.")
+                        if n.get('originalContent'): st.caption("Nội dung gốc:"); st.text(n.get('originalContent'))
                         st.divider()
         else: news_cont.info(f"📭 Hiện chưa có tin tức nào cho {symbol}.")
 

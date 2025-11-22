@@ -164,7 +164,7 @@ streamlit run frontend/vietnam_stock_dashboard.py
 | Họ và tên | Vai trò | Nhiệm vụ |
 |-----------|---------|----------|
 | Phan Nhật Quang | AI Engineer | Thuật toán TRR, Graph RAG, Prompt Engineering, Core AI |
-| Bùi Minh Quân | Data Engineer | Data Pipeline, , Database, Crawling |
+| Bùi Minh Quân | Data Engineer | Data Pipeline, Database, Crawling |
 | Phan Quang Trường | Frontend Dev | Dashboard, Visualization, Backtesting, Kafka Streaming|
 
 ---
