@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 import networkx as nx
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
+
 import json
 import threading
 import queue
@@ -19,6 +20,10 @@ import time
 import sys
 import os
 import math
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(ROOT_DIR)
+from database.db import get_database
 
 # --- 1. CẤU HÌNH HỆ THỐNG ---
 os.environ["PYTHONIOENCODING"] = "utf-8"
@@ -46,14 +51,13 @@ VIETNAM_STOCKS = {
 # ==========================================
 @st.cache_resource
 def init_mongo():
-    try: return MongoClient("mongodb://localhost:27017/")['bigdata_trr']
-    except: return None
+    return get_database()
 
 def get_stock_history_hybrid(symbol, days=90):
     try:
         end_date = datetime.now().strftime('%Y-%m-%d')
         start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-        quote = Quote(symbol.upper(), 'tcbs')
+        quote = Quote(symbol=symbol.upper(),  source='vci')
         df = quote.history(start=start_date, end=end_date, interval='1D')
         if df is not None and not df.empty:
             df = df.rename(columns={'time': 'Date', 'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'})

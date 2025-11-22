@@ -28,7 +28,7 @@ def summarize_text(text):
     
     return text
 
-def run_summarization(batch_size=100):
+def run_summarization(batch_size=1000):
     # Get postID of documents that are already summarized
     summarized_ids = set(
         summarized_news_collection.distinct("postID")
@@ -76,4 +76,4 @@ def run_summarization(batch_size=100):
     logger.info(f"Summarization completed. Total posts summarized: {count}")
 
 if __name__ == "__main__":
-    run_summarization(batch_size=100)
+    run_summarization(batch_size=1000)
