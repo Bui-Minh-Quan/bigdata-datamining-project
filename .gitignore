@@ -33,3 +33,16 @@ TRR_model.py
 # ignore Jupyter Notebook file
 test.ipynb
 
+# ignore some .html files
+network_FPT.html
+network_VCI.html
+network_VND.html
+network_SSI.html
+network_VCB.html 
+network_GAS.html 
+network_MSN.html
+network_VIC.html
+network_HPG.html
+network_MWG.html
+network_GVR.html
+network_VHM.html

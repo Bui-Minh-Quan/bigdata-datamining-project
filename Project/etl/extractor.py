@@ -626,10 +626,11 @@ def build_daily_knowledge_graph_batch(target_date=None):
     """
     if target_date is None:
         target_date = datetime.now().strftime("%Y-%m-%d 00:00:00")
+        
     print(f"Building knowledge graph for date: {target_date}")
     
     # 1. Get summarized articles in target date from mongoDB
-    cursor = db['summarized_news'].find({"date": target_date})
+    cursor = db['news'].find({"date": target_date})
     articles = list(cursor)
     # articles = articles[:40]  # Limit to first 20 articles for performance during testing
     
@@ -661,13 +662,17 @@ if __name__ == "__main__":
     # Example run
     # G = build_daily_knowledge_graph("2025-11-19 00:00:00")
     # print("Sample nodes:", list(G.nodes(data=True))[:5])
+
+        
     
-    G = build_daily_knowledge_graph_batch()
-    # print("Sample nodes:", list(G.nodes(data=True))[:5])
-    if G.number_of_nodes() > 0:
-        try:
-            save_graph(G)
-        except Exception as e:
-            print(f"Error saving graph to Neo4j: {e}") 
-    else :
-        print("Graph is empty, not saving to Neo4j.")
+    # build knowledge graph from 2025-11-00 to 2025-11-22 in reverse order
+    for day in range(22, 0, -1):
+        date_str = f"2025-11-{day:02d} 00:00:00"
+        G = build_daily_knowledge_graph_batch(date_str)
+        if G.number_of_nodes() > 0:
+            try:
+                save_graph(G)
+            except Exception as e:
+                print(f"Error saving graph to Neo4j for date {date_str}: {e}") 
+        else :
+            print(f"Graph for date {date_str} is empty, not saving to Neo4j.")

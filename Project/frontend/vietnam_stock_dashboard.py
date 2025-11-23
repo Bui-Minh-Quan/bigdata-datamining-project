@@ -6,6 +6,8 @@ Visualization:
 - Node Labels (Title for Articles).
 - 2-Hop Neighbor Search.
 """
+from pyvis.network import Network
+import streamlit.components.v1 as components
 import streamlit as st
 import threading
 import pandas as pd
@@ -108,34 +110,63 @@ def get_news(symbol):
     return list(db['news'].find({"taggedSymbols": symbol, "date": {"$exists": True}}).sort("date", -1).limit(10))
 
 def get_neo4j_data(symbol):
-    """
-    Query lấy dữ liệu đồ thị mở rộng (1-2 hops) để thấy tác động gián tiếp.
-    Lấy đầy đủ thuộc tính impact, description, title, name.
-    """
     try:
         driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password123"))
         with driver.session() as session:
-            # Query tìm đường đi độ dài 1 đến 2 từ/đến Stock
-            # UNWIND để làm phẳng danh sách các cạnh
             q = """
             MATCH (s:Stock {name: $sym})
-            MATCH path = (s)-[*1..2]-(n)
+
+            // 1. Tìm TẤT CẢ đường dẫn (1..2 hops)
+            MATCH path = (source)-[*1..2]->(s)
+
+            // 2. Blacklist (Giữ nguyên logic của bạn)
+            WHERE source <> s 
+            AND NONE(n IN nodes(path) WHERE n.name IN [
+                'Thị trường chứng khoán', 'Thị trường', 'Việt Nam', 'Kinh tế', 
+                'Tài chính', 'Ngành ngân hàng', "Ngân hàng", 'Bất động sản',
+                'Doanh nghiệp', 'Nhà đầu tư', 'Cổ phiếu', 'Tin tức', 'Chính phủ',
+                'Ngân sách nhà nước', 'Thị trường bất động sản'
+            ])
+
+            // 3. Chuẩn bị dữ liệu để phân loại
+            WITH path, length(path) as hops, relationships(path)[-1] as direct_rel
+            WHERE direct_rel.date IS NOT NULL
+            
+            // Sắp xếp chung toàn bộ theo thời gian giảm dần trước
+            ORDER BY direct_rel.date DESC
+
+            // 4. [LOGIC MỚI] GOM NHÓM VÀ CẮT RIÊNG (QUOTA)
+            // Gom tất cả lại thành một danh sách
+            WITH collect({path: path, hops: hops}) as all_paths
+            
+            // Lọc ra danh sách trực tiếp và lấy Top 70
+            WITH [x IN all_paths WHERE x.hops = 1][0..70] as direct_paths,
+                 
+            // Lọc ra danh sách gián tiếp và lấy Top 30
+                 [x IN all_paths WHERE x.hops = 2][0..30] as indirect_paths
+
+            // Gộp 2 danh sách lại (Tổng cộng tối đa 100, nhưng đảm bảo luôn có cả 2 loại)
+            UNWIND (direct_paths + indirect_paths) as item
+            WITH item.path as path
+
+            // 5. Bung ra để trả về (Giữ nguyên)
             UNWIND relationships(path) as r
-            WITH startNode(r) as source, endNode(r) as target, r
+            WITH startNode(r) as src, endNode(r) as tgt, r
+            
             RETURN DISTINCT
-                source.name as src_name, labels(source) as src_labels, source.title as src_title,
-                target.name as tgt_name, labels(target) as tgt_labels, target.title as tgt_title,
+                COALESCE(src.name, src.title, toString(src.id), head(labels(src))) as src_name, 
+                labels(src) as src_labels,
+                COALESCE(tgt.name, tgt.title, toString(tgt.id), head(labels(tgt))) as tgt_name, 
+                labels(tgt) as tgt_labels,
                 type(r) as rel_type, 
                 r.impact as impact, 
                 r.description as description, 
                 r.date as date
-            LIMIT 50
             """
             return session.run(q, sym=symbol).data()
     except Exception as e:
         print(f"Neo4j Error: {e}")
         return []
-
 # ==========================================
 # 3. ADVANCED GRAPH VISUALIZATION
 # ==========================================
@@ -310,6 +341,83 @@ def create_network_graph(data, center_node_id):
 
     return fig
 
+def create_interactive_graph(data, center_node_id):
+    if not data: return None
+
+    net = Network(height='600px', width='100%', bgcolor='#ffffff', font_color='black')
+    
+    # Cấu hình vật lý
+    net.force_atlas_2based(
+        gravity=-80,           
+        central_gravity=0.01,  
+        spring_length=120,     
+        spring_strength=0.08,  
+        damping=0.4,           
+        overlap=0      
+    )
+
+    color_map = {'Stock': '#FF4B4B', 'Article': '#1E90FF', 'Entity': '#2E8B57'}
+    shape_map = {'Stock': 'star', 'Article': 'square', 'Entity': 'dot'} 
+    added_nodes = set()
+
+    for item in data:
+        # --- Node Nguồn ---
+        src_labels = item.get('src_labels', [])
+        src_type = 'Stock' if 'Stock' in src_labels else ('Article' if 'Article' in src_labels else 'Entity')
+        src_name = item.get('src_name', 'Unknown') 
+        
+        # --- Node Đích ---
+        tgt_labels = item.get('tgt_labels', [])
+        tgt_type = 'Stock' if 'Stock' in tgt_labels else ('Article' if 'Article' in tgt_labels else 'Entity')
+        tgt_name = item.get('tgt_name', 'Unknown')
+
+        # Thêm Node
+        if src_name not in added_nodes:
+            label_display = shorten_text(src_name, 20)
+            net.add_node(src_name, label=label_display, title=f"Tên thực thể: {src_name} \nLoại thực thể: {src_type}", 
+                         color=color_map.get(src_type, '#97c2fc'), 
+                         shape=shape_map.get(src_type, 'dot'),
+                         size=30 if src_type == 'Stock' else (25 if src_type == 'Article' else 15))
+            added_nodes.add(src_name)
+            
+        if tgt_name not in added_nodes:
+            label_display = shorten_text(tgt_name, 20)
+            net.add_node(tgt_name, label=label_display, title=f"Tên thực thể: {tgt_name} \nLoại thực thể: {tgt_type}", 
+                         color=color_map.get(tgt_type, '#97c2fc'), 
+                         shape=shape_map.get(tgt_type, 'dot'),
+                         size=30 if tgt_type == 'Stock' else (25 if tgt_type == 'Article' else 15))
+            added_nodes.add(tgt_name)
+
+        # --- Thêm Cạnh (Xử lý Hover Description) ---
+        impact = item.get('impact', 'RELATED')
+        
+        # Lấy description và xử lý nếu nó là list
+        raw_desc = item.get('description', '')
+        if isinstance(raw_desc, list):
+            description = ", ".join(raw_desc)
+        else:
+            description = str(raw_desc)
+            
+        # Tạo nội dung HTML cho Tooltip
+        # Khi hover vào dây, nó sẽ hiện ra cái bảng nhỏ này
+        impact_vietsub = "TÍCH CỰC" if impact == 'POSITIVE' else ("TIÊU CỰC" if impact == 'NEGATIVE' else "LIÊN QUAN")
+        hover_content = f"""
+        Ảnh hưởng: {impact_vietsub}
+        Thông tin chi tiết: {description}
+        """
+        
+        edge_color = '#00CC00' if impact == 'POSITIVE' else ('#FF0000' if impact == 'NEGATIVE' else '#cccccc')
+        
+        net.add_edge(
+            src_name, 
+            tgt_name, 
+            title=hover_content,  # <--- THAY ĐỔI Ở ĐÂY (Nội dung hover)
+            color=edge_color, 
+            width=1.5,
+            arrows='to'
+        )
+
+    return net
 # ==========================================
 # 4. KAFKA WORKER
 # ==========================================
@@ -473,7 +581,7 @@ def main():
         else: ai_cont.info("Chưa có dữ liệu phân tích. Bấm nút 'Dự đoán xu hướng' bên trái để chạy.")
 
     with t2:
-        if not history_df.empty: st.plotly_chart(create_chart(history_df, symbol), use_container_width=True); st.caption(f"Nguồn: {data_source}")
+        if not history_df.empty: st.plotly_chart(create_chart(history_df, symbol), width="stretch"); st.caption(f"Nguồn: {data_source}")
         else: st.warning("Chưa có dữ liệu giá.")
 
     with t3:
@@ -492,19 +600,37 @@ def main():
     with t4:
         rels = get_neo4j_data(symbol)
         if rels:
-            g_col1, g_col2 = st.columns([4, 1])
-            fig_net = create_network_graph(rels, symbol)
-            with g_col1: st.plotly_chart(fig_net, use_container_width=True)
-            with g_col2:
-                st.info("💡 **Chú thích:**")
-                st.markdown("🔴 **Stock**: Cổ phiếu")
-                st.markdown("🔵 **Article**: Tin tức")
-                st.markdown("🟢 **Entity**: Thực thể")
-                st.divider()
-                st.markdown("**Đường nối:**")
-                st.markdown("<span style='color:#00CC00'>━━</span> Tích cực", unsafe_allow_html=True)
-                st.markdown("<span style='color:#FF0000'>━━</span> Tiêu cực", unsafe_allow_html=True)
-        else: st.warning("Không có dữ liệu đồ thị.")
+            st.caption("💡 Bạn có thể kéo thả các node, lăn chuột để zoom.")
+            
+            # Tạo graph
+            net = create_interactive_graph(rels, symbol)
+            
+            if net:
+                # Lưu vào file html tạm
+                path = "/tmp" if os.path.exists("/tmp") else "."
+                file_name = f"{path}/network_{symbol}.html"
+                net.save_graph(file_name)
+                
+                # Đọc file html và hiển thị bằng Streamlit Component
+                with open(file_name, 'r', encoding='utf-8') as f:
+                    html_content = f.read()
+                
+                # Render HTML
+                components.html(html_content, height=610, scrolling=False)
+                
+                # Chú thích thủ công bên dưới (Vì PyVis legend hơi khó chỉnh)
+                st.markdown("""
+                <div style="text-align: center; margin-top: 10px;">
+                    <span style='color:#FF4B4B; font-weight:bold'>★ Stock</span> &nbsp;|&nbsp; 
+                    <span style='color:#1E90FF; font-weight:bold'>■ Article</span> &nbsp;|&nbsp; 
+                    <span style='color:#2E8B57; font-weight:bold'>● Entity</span> <br>
+                    <span style='color:#00CC00'>── Positive Impact</span> &nbsp;|&nbsp; 
+                    <span style='color:#FF0000'>── Negative Impact</span>
+                </div>
+                """, unsafe_allow_html=True)
+            
+        else: 
+            st.warning("Không có dữ liệu đồ thị.")
 
     time.sleep(2)
     st.rerun()
