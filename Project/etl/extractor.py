@@ -660,13 +660,10 @@ def build_daily_knowledge_graph_batch(target_date=None):
 
 if __name__ == "__main__":
     # Example run
-    # G = build_daily_knowledge_graph("2025-11-19 00:00:00")
-    # print("Sample nodes:", list(G.nodes(data=True))[:5])
-
-        
     
-    # build knowledge graph from 2025-11-00 to 2025-11-22 in reverse order
-    for day in range(22, 0, -1):
+    
+    # build knowledge graph from 2025-11-00 to 2025-11-23 in reverse order
+    for day in range(23, 0, -1):
         date_str = f"2025-11-{day:02d} 00:00:00"
         G = build_daily_knowledge_graph_batch(date_str)
         if G.number_of_nodes() > 0:

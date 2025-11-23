@@ -30,7 +30,7 @@ class TRRMemoryAttention:
         self.TOP_Q = 10
         
         # Khoảng thời gian nhìn lại quá khứ (ngày)
-        self.LOOKBACK_DAYS = 30 
+        self.LOOKBACK_DAYS = 10
         
     def close(self):
         if self.driver:
@@ -182,9 +182,7 @@ class TRRMemoryAttention:
             impact = data.get("impact", "RELATED")
             desc = data.get("description", "")
             
-            # Cắt ngắn description nếu quá dài để tiết kiệm token
-            if len(desc) > 100:
-                desc = desc[:100] + "..."
+            
             
             # Format dòng text
             tuple_str = f"- [{date}] {u} --({impact})--> {v} : {desc}"

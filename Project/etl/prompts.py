@@ -13,28 +13,38 @@ QUY TẮC BẮT BUỘC (CRITICAL RULES):
    - BẮT BUỘC chỉ dùng MÃ CỔ PHIẾU làm tên thực thể.
    - Ví dụ: Dùng "HPG" (thay vì "Tập đoàn Hòa Phát"), dùng "MWG" (thay vì "Thế giới di động").
    - KHÔNG thêm tên ngành hay mô tả vào trong tên (VD: Sai -> "FPT Công nghệ", Đúng -> "FPT").
-2. NẾU thực thể không nằm trong Portfolio:
-   - Dùng tên ngắn gọn, phổ biến nhất. Ví dụ: "Ngành thép", "Ngân hàng Nhà nước".
-3. Luôn ưu tiên liên kết với các thực thể đã có: {existing_entities}
+
+2. XỬ LÝ CÁC TỪ CHUNG CHUNG (BLACKLIST):
+   - TUYỆT ĐỐI KHÔNG dùng các từ sau làm thực thể độc lập: "Doanh nghiệp", "Công ty", "Nhà đầu tư", "Người dân", "Thị trường", "Kinh tế", "Việt Nam", "Chính phủ", "Nhà nước", "Khách hàng", "Người tiêu dùng".
+   - PHẢI cụ thể hóa chúng theo Ngành hoặc Nhóm đối tượng.
+     + Sai: "Doanh nghiệp" -> Đúng: "Doanh nghiệp Bất động sản", "Các công ty xuất khẩu".
+     + Sai: "Nhà đầu tư" -> Đúng: "Khối ngoại", "Nhà đầu tư cá nhân".
+     + Sai: "Người dân" -> Đúng: "Người mua nhà", "Tầng lớp trung lưu".
+   - Nếu không thể cụ thể hóa, hãy BỎ QUA thực thể đó.
+
+3. Ưu tiên liên kết với các thực thể đã có: {existing_entities}
 4. Chỉ trích xuất tối đa 5 thực thể quan trọng nhất.
 
 Định dạng trả về:
 [[POSITIVE]]
-[Mã_CP_hoặc_Tên_Thực_Thể]: [Giải thích ngắn gọn nguyên nhân và số liệu]
+[Mã_CP_hoặc_Tên_Cụ_Thể]: [Giải thích ngắn gọn nguyên nhân và số liệu]
 
 [[NEGATIVE]]
-[Mã_CP_hoặc_Tên_Thực_Thể]: [Giải thích ngắn gọn nguyên nhân và số liệu]
+[Mã_CP_hoặc_Tên_Cụ_Thể]: [Giải thích ngắn gọn nguyên nhân và số liệu]
 
 ----------------
 (VÍ DỤ MINH HỌA)
 
-Bài báo: Lợi nhuận Hòa Phát tăng gấp đôi nhờ giá thép hồi phục. Vingroup mở bán dự án mới.
+Bài báo: Các doanh nghiệp gặp khó vì tỷ giá. Người dân thắt chặt chi tiêu. Vinamilk vẫn lãi lớn.
 Danh sách thực thể:
 
 [[POSITIVE]]
-Ngành thép: Hưởng lợi từ giá bán phục hồi, biên lợi nhuận cải thiện.
-HPG: Là doanh nghiệp đầu ngành thép, lợi nhuận tăng gấp đôi so với cùng kỳ.
-VIC: Tăng trưởng doanh thu nhờ mở bán thành công dự án bất động sản mới.
+VNM: Doanh thu ổn định nhờ vị thế đầu ngành sữa, bất chấp sức mua giảm.
+
+[[NEGATIVE]]
+Doanh nghiệp nhập khẩu: Chịu áp lực chi phí đầu vào tăng cao do tỷ giá.
+Ngành bán lẻ: Doanh thu sụt giảm do người tiêu dùng thắt chặt chi tiêu.
+(Lưu ý: Không dùng "Doanh nghiệp", "Người dân" chung chung)
 
 (HẾT VÍ DỤ)
 ----------------
@@ -57,10 +67,20 @@ Dựa trên tác động đến "Thực thể gốc", hãy suy luận các thự
 DANH MỤC ĐẦU TƯ: {portfolio}
 THỰC THỂ ĐÃ CÓ: {existing_entities}
 
-QUY TẮC ĐẶT TÊN THỰC THỂ:
-- TUYỆT ĐỐI TUÂN THỦ: Nếu nhắc đến công ty trong danh mục đầu tư, PHẢI dùng MÃ CỔ PHIẾU (Ví dụ: HPG, VCB, FPT).
-- KHÔNG dùng tên dài dòng như "Tập đoàn FPT", "Cổ phiếu VCB". Chỉ dùng mã 3 chữ cái.
-- Hạn chế tạo thực thể mới, ưu tiên dùng lại thực thể đã có.
+QUY TẮC ĐẶT TÊN THỰC THỂ (BẮT BUỘC TUÂN THỦ):
+1. NẾU thực thể là công ty trong Portfolio trên:
+   - BẮT BUỘC chỉ dùng MÃ CỔ PHIẾU làm tên thực thể.
+   - Ví dụ: Dùng "HPG" (thay vì "Tập đoàn Hòa Phát"), dùng "MWG" (thay vì "Thế giới di động").
+   - KHÔNG thêm tên ngành hay mô tả vào trong tên (VD: Sai -> "FPT Công nghệ", Đúng -> "FPT").
+   
+2. XỬ LÝ CÁC TỪ CHUNG CHUNG (BLACKLIST):
+   - TUYỆT ĐỐI KHÔNG dùng các từ sau làm thực thể độc lập: "Doanh nghiệp", "Công ty", "Nhà đầu tư", "Người dân", "Thị trường", "Kinh tế", "Việt Nam", "Chính phủ", "Nhà nước", "Khách hàng", "Người tiêu dùng".
+   - PHẢI cụ thể hóa chúng theo Ngành hoặc Nhóm đối tượng.
+     + Sai: "Doanh nghiệp" -> Đúng: "Doanh nghiệp Bất động sản", "Các công ty xuất khẩu".
+     + Sai: "Nhà đầu tư" -> Đúng: "Khối ngoại", "Nhà đầu tư cá nhân".
+     + Sai: "Người dân" -> Đúng: "Người mua nhà", "Tầng lớp trung lưu".
+   - Nếu không thể cụ thể hóa, hãy BỎ QUA thực thể đó.
+3. Hạn chế tạo thực thể mới, Ưu tiên liên kết với các thực thể đã có: {existing_entities}
 
 Định dạng trả về:
 [[POSITIVE]]
@@ -72,7 +92,7 @@ QUY TẮC ĐẶT TÊN THỰC THỂ:
 
 (VÍ DỤ)
 Thực thể gốc: Bộ Xây dựng
-Ảnh hưởng: Thúc đẩy giải ngân đầu tư công cho 3000km cao tốc.
+Ảnh hưởng ban đầu: Thúc đẩy giải ngân đầu tư công cho 3000km cao tốc.
 
 Kết quả suy luận:
 [[POSITIVE]]
@@ -97,10 +117,20 @@ Dưới đây là danh sách các thực thể và tác động họ đang chị
 DANH MỤC ƯU TIÊN (PORTFOLIO): {portfolio}
 THỰC THỂ ĐÃ CÓ: {existing_entities}
 
-LUẬT BẤT DI BẤT DỊCH:
-1. Khi output tên thực thể, nếu là công ty trong Portfolio, CHỈ VIẾT MÃ CỔ PHIẾU (VD: VHM, MSN, GAS).
-2. Không viết: "Vinhomes", "Masan Group". Phải viết: "VHM", "MSN".
-3. Mỗi thực thể gốc chỉ suy luận ra tối đa 2 thực thể bị ảnh hưởng tiếp theo.
+QUY TẮC (BẮT BUỘC TUÂN THỦ):
+1. NẾU thực thể là công ty trong Portfolio trên:
+   - BẮT BUỘC chỉ dùng MÃ CỔ PHIẾU làm tên thực thể.
+   - Ví dụ: Dùng "HPG" (thay vì "Tập đoàn Hòa Phát"), dùng "MWG" (thay vì "Thế giới di động").
+   - KHÔNG thêm tên ngành hay mô tả vào trong tên (VD: Sai -> "FPT Công nghệ", Đúng -> "FPT").
+2. XỬ LÝ CÁC TỪ CHUNG CHUNG (BLACKLIST):
+   - TUYỆT ĐỐI KHÔNG dùng các từ sau làm thực thể độc lập: "Doanh nghiệp", "Công ty", "Nhà đầu tư", "Người dân", "Thị trường", "Kinh tế", "Việt Nam", "Chính phủ", "Nhà nước", "Khách hàng", "Người tiêu dùng".
+   - PHẢI cụ thể hóa chúng theo Ngành hoặc Nhóm đối tượng.
+     + Sai: "Doanh nghiệp" -> Đúng: "Doanh nghiệp Bất động sản", "Các công ty xuất khẩu".
+     + Sai: "Nhà đầu tư" -> Đúng: "Khối ngoại", "Nhà đầu tư cá nhân".
+     + Sai: "Người dân" -> Đúng: "Người mua nhà", "Tầng lớp trung lưu".
+   - Nếu không thể cụ thể hóa, hãy BỎ QUA thực thể đó.
+3. Ưu tiên liên kết với các thực thể đã có: {existing_entities}
+3. Mỗi thực thể gốc chỉ suy luận ra tối đa 3 thực thể bị ảnh hưởng tiếp theo.
 
 Định dạng Output:
 [[SOURCE: Tên thực thể nguồn]]
@@ -150,16 +180,26 @@ Quy tắc 1: ĐỊNH DANH CỔ PHIẾU (QUAN TRỌNG NHẤT)
    - Ví dụ sai ❌: "Tập đoàn Hòa Phát", "Cổ phiếu HPG", "HPG Steel", "Vinamilk".
    - Ví dụ đúng ✅: "HPG", "VNM", "VCB", "FPT".
 
-Quy tắc 2: CHUẨN HÓA THỰC THỂ PHI CỔ PHIẾU
-   - Với các thực thể không phải cổ phiếu (Ngành, Hàng hóa, Vĩ mô), hãy dùng danh từ ngắn gọn, mang tính đại diện cao.
-   - Gộp các biến thể về một tên chuẩn.
-   - Ví dụ: "Giá dầu thế giới", "Giá dầu thô", "Thị trường dầu" -> Gộp thành: "Giá dầu".
-   - Ví dụ: "Chính phủ VN", "Nhà nước Việt Nam" -> Gộp thành: "Chính phủ Việt Nam".
+Quy tắc 2: "CẤM CỬA" TỪ KHÓA CHUNG CHUNG (ANTI-SUPER NODES)
+   - Bạn TUYỆT ĐỐI KHÔNG được tạo ra các node có tên sau:
+     ["Doanh nghiệp", "Công ty", "Nhà đầu tư", "Người dân", "Thị trường", "Kinh tế", "Việt Nam", "Chính phủ", "Nhà nước", "Khách hàng", "Người lao động", "Xã hội"].
+   
+   - Thay vào đó, bạn PHẢI cụ thể hóa chúng:
+     ❌ "Doanh nghiệp" -> ✅ "Doanh nghiệp Xuất khẩu", "Doanh nghiệp BĐS", "SME".
+     ❌ "Nhà đầu tư"   -> ✅ "Khối ngoại", "Tự doanh", "Nhà đầu tư cá nhân".
+     ❌ "Người dân"    -> ✅ "Người mua nhà", "Tầng lớp thu nhập thấp".
+     ❌ "Nhà nước"     -> ✅ "Ngân hàng Nhà nước", "Bộ Tài chính", "Ngân sách Nhà nước".
+   
+   - Nếu tin tức quá chung chung và không thể cụ thể hóa -> HÃY BỎ QUA, không trích xuất.
 
 Quy tắc 3: PHÂN TÍCH TÁC ĐỘNG (IMPACT)
    - Chỉ trích xuất tối đa **3-4 thực thể** quan trọng nhất chịu ảnh hưởng trực tiếp.
    - Phần giải thích phải ngắn gọn, chứa từ khóa kinh tế (doanh thu, lợi nhuận, chi phí đầu vào, tâm lý thị trường, tỷ giá...).
    - Nếu tin tức có số liệu cụ thể (tăng 5%, lãi 1000 tỷ...), hãy đưa vào phần giải thích.
+   
+Quy tắc 4: ƯU TIÊN NGÀNH VÀ HÀNG HÓA
+   - Nếu không xác định được công ty cụ thể, hãy dùng tên NGÀNH (VD: Ngành Thép, Ngành Du lịch, Ngành Ngân hàng).
+   - Các biến số vĩ mô: "Tỷ giá", "Lãi suất", "Giá vàng", "Giá dầu".
 
 =========================================
 📝 ĐỊNH DẠNG GIAO TIẾP

@@ -10,9 +10,9 @@
 |-----------|------|
 | Source Code (GitHub) | https://github.com/Bui-Minh-Quan/bigdata-datamining-project |
 | Báo cáo chi tiết (PDF) | https://github.com/Bui-Minh-Quan/bigdata-datamining-project/blob/main/Big_Data_Project.pdf |
-| Video Demo & Thuyết trình | Đang cập nhật |
+| Video Demo Hệ thống| https://drive.google.com/file/d/1CmrN30rvr2QNedQGwNMIukRI0jRhFSk-/view?usp=sharing |
 | Trang web Demo (Live) | Đang cập nhật |
-| Slides Thuyết trình | Đang cập nhật... |
+| Slides Thuyết trình | https://docs.google.com/presentation/d/1yAx1ZoLnaDw2fgSxufjRKLuwpuzPYU3OHLyv_4mH_fU/edit?usp=sharing |
 
 ---
 
