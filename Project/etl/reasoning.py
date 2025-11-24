@@ -108,7 +108,6 @@ class StockPredictor:
         if target_date is None:
             target_date = datetime.today().strftime("%Y-%m-%d")
         prices_col = self.db["stock_price_data"]
-        
         # 1. Chuẩn bị mốc thời gian
         target_dt = pd.to_datetime(target_date)
         # Tăng buffer lên 30 ngày để đảm bảo lấy đủ 5 phiên (trừ thứ 7, CN, lễ)
@@ -121,9 +120,11 @@ class StockPredictor:
         # 2. Query Database
         # SỬA QUAN TRỌNG: Đổi 'date' thành 'time'
         # Lưu ý: Bạn cũng nên check xem field mã cổ phiếu là 'symbol' hay 'code'
+        # target_date_query = target_str + 1 day để lấy giá trước ngày mục tiêu
+        target_date_query = (target_dt + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
         query = {
             "symbol": ticker, 
-            "time": {"$gte": start_str, "$lt": target_str}
+            "time": {"$gte": start_str, "$lt": target_date_query}
         }
         
         # Sort theo time tăng dần để dễ xử lý
@@ -213,14 +214,11 @@ if __name__ == "__main__":
     predictor = StockPredictor()
     
     # test get recent prices
-    prices = predictor.get_recent_prices("VCB")
-    sentiments = predictor.get_social_sentiment(ticker="VCB")
+    prices = predictor.get_recent_prices("MSN")
+    sentiments = predictor.get_social_sentiment(ticker="MSN")
 
-    print("Recent prices for VCB:", prices)
-    print("Social sentiment for VCB:", sentiments)
-    # test prediction
-    graph_context = "VCB liên quan đến việc Ngân hàng Nhà nước điều chỉnh lãi suất cơ bản, ảnh hưởng đến toàn ngành ngân hàng."
-    prediction = predictor.predict(ticker="VCB", graph_context=graph_context)
-    print("Prediction for VCB:\n", prediction)
+    print("Recent prices for MSN:", prices)
+    print("Social sentiment for MSN:", sentiments)
+ 
 
         
