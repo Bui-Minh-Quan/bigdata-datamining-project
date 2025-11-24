@@ -120,9 +120,9 @@ def run_full_pipeline(target_date_input=None, progress_callback=None):
     
     # BƯỚC 2: TÓM TẮT & XÂY GRAPH
     update_status("🧠 Bước 2: Tóm tắt và xây dựng đồ thị tri thức...", 50)
-    run_summarization()
+
     
-    daily_graph = build_daily_knowledge_graph_batch(target_date_str)
+    daily_graph = build_daily_knowledge_graph_batch(target_date_str + " 00:00:00")
     
     # BƯỚC 3: TÍCH HỢP NEO4J
     update_status("💾 Bước 3: Lưu trữ vào Neo4j...", 70)

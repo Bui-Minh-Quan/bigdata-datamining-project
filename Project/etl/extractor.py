@@ -663,6 +663,7 @@ if __name__ == "__main__":
     
     
     # build knowledge graph from 2025-11-00 to 2025-11-23 in reverse order
+    """ 
     for day in range(23, 0, -1):
         date_str = f"2025-11-{day:02d} 00:00:00"
         G = build_daily_knowledge_graph_batch(date_str)
@@ -673,3 +674,14 @@ if __name__ == "__main__":
                 print(f"Error saving graph to Neo4j for date {date_str}: {e}") 
         else :
             print(f"Graph for date {date_str} is empty, not saving to Neo4j.")
+        """
+    # build for today
+    today_str = datetime.now().strftime("%Y-%m-%d 00:00:00")
+    G = build_daily_knowledge_graph_batch(today_str)
+    if G.number_of_nodes() > 0:
+        try:
+            save_graph(G)
+        except Exception as e:
+            print(f"Error saving graph to Neo4j for date {today_str}: {e}") 
+    else :
+        print(f"Graph for date {today_str} is empty, not saving to Neo4j.")

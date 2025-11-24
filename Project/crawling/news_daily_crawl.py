@@ -161,6 +161,10 @@ def process_post(post: Dict) -> Optional[Dict]:
             date_str = parser.isoparse(date_raw).isoformat() if date_raw else None
         except:
             date_str = date_raw
+        
+        if date_str == "NaT":
+            # set date_str to be today's date
+            date_str = datetime.now().isoformat()
             
         tagged_symbols = post.get("taggedSymbols")
         if not isinstance(tagged_symbols, list):

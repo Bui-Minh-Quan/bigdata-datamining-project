@@ -196,7 +196,7 @@ class StockPredictor:
         
         # Get LLM chain
         # print prompt_inputs for debugging
-        print(PREDICTION_PROMPT.format(**prompt_inputs))
+        
         try:
             response = invoke_chain_with_retry(
                 PREDICTION_PROMPT,
