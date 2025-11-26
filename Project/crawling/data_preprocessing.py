@@ -148,7 +148,16 @@ def preprocess_news_df(df: pd.DataFrame):
     df = df.copy()
     df['originalContent'] = df['originalContent'].apply(clean_html)
     df['content'] = df.apply(combine_content, axis=1)
-    df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.date.astype(str)
+    
+    # handle date column
+    # Use utc=True to handle mixed timezone/naive strings
+    df['date'] = pd.to_datetime(df['date'], errors='coerce', utc=True)
+    if df['date'].isnull().any():
+            # CRITICAL FIX: Use tz='UTC' so the fill value matches the column's timezone.
+            # This prevents the column from turning into an 'object' type.
+            df['date'] = df['date'].fillna(pd.Timestamp.now(tz='UTC'))
+    # Now it is safe to extract the date part
+    df['date'] = df['date'].dt.date.astype(str)
     
     processed_df = df[['postID' ,'date', 'content', 'taggedSymbols']]
     

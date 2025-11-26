@@ -158,13 +158,10 @@ def process_post(post: Dict) -> Optional[Dict]:
         
         date_raw = post.get("date")
         try:
-            date_str = parser.isoparse(date_raw).isoformat() if date_raw else None
+            date_str = parser.isoparse(date_raw).isoformat() if date_raw else datetime.now().isoformat()
         except:
-            date_str = date_raw
-        
-        if date_str == "NaT":
-            # set date_str to be today's date
             date_str = datetime.now().isoformat()
+   
             
         tagged_symbols = post.get("taggedSymbols")
         if not isinstance(tagged_symbols, list):
@@ -220,5 +217,5 @@ def main_news_crawling(target_day=None):
 
 if __name__ == "__main__":
     # Test chạy
-    target_date_str = (datetime.now() - timedelta(days=600)).strftime("%Y-%m-%d")
+    target_date_str = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
     main_news_crawling(target_date_str)
