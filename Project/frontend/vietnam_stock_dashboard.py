@@ -27,6 +27,14 @@ import sys
 import os
 import math
 
+from dotenv import load_dotenv
+load_dotenv()
+
+KAFKA_SERVER = os.getenv('KAFKA_SERVER', 'localhost:9092')
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER = os.getenv("NEO4J_USERNAME", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password123")
+
 os.environ["PYTHONWARNINGS"] = "ignore"
 
 # 2. Tắt warning ở mức Python
@@ -111,7 +119,7 @@ def get_news(symbol):
 
 def get_neo4j_data(symbol):
     try:
-        driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password123"))
+        driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
         with driver.session() as session:
             q = """
             MATCH (s:Stock {name: $sym})
@@ -427,7 +435,7 @@ if 'kafka_data' not in st.session_state: st.session_state.kafka_data = {}
 def kafka_worker():
     if not KAFKA_AVAILABLE: return
     try:
-        consumer = KafkaConsumer('stock-prices', bootstrap_servers='localhost:9092', value_deserializer=lambda m: json.loads(m.decode('utf-8')), consumer_timeout_ms=1000)
+        consumer = KafkaConsumer('stock-prices', bootstrap_servers=KAFKA_SERVER, value_deserializer=lambda m: json.loads(m.decode('utf-8')), consumer_timeout_ms=1000)
         for msg in consumer: st.session_state.data_queue.put(msg.value)
     except: pass
 

@@ -2,6 +2,7 @@
 Advanced Stock Dashboard - Vietnam Market
 Design based on frontendv2 with Kafka integration, News and Neo4j Graph
 """
+import os
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -18,6 +19,14 @@ import random
 from kafka import KafkaConsumer
 from neo4j import GraphDatabase
 from vnstock import Quote
+from dotenv import load_dotenv
+load_dotenv()
+
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER = os.getenv("NEO4J_USERNAME", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password123")
+
+KAFKA_SERVER = os.getenv('KAFKA_SERVER', 'localhost:9092')
 
 # Page configuration - disable animation
 st.set_page_config(
@@ -408,7 +417,7 @@ def kafka_consumer_thread(data_queue, topic='stock-prices'):
     try:
         consumer = KafkaConsumer(
             topic,
-            bootstrap_servers='localhost:9092',
+            bootstrap_servers=KAFKA_SERVER,
             value_deserializer=lambda m: json.loads(m.decode('utf-8')),
             auto_offset_reset='latest',
             consumer_timeout_ms=1000
@@ -444,7 +453,7 @@ import random
 
 # Neo4j Connection
 class Neo4jConnection:
-    def __init__(self, uri="bolt://localhost:7687", user="neo4j", password="password123"): 
+    def __init__(self, uri=NEO4J_URI, user=NEO4J_USER, password=NEO4J_PASSWORD): 
         try:
             self.driver = GraphDatabase.driver(uri, auth=(user, password))
         except Exception:
@@ -1775,7 +1784,7 @@ def main():
                 try:
                     test_consumer = KafkaConsumer(
                         'stock-prices',
-                        bootstrap_servers='localhost:9092',
+                        bootstrap_servers= os.getenv('KAFKA_SERVER', 'localhost:9092'),
                         consumer_timeout_ms=1000
                     )
                     test_consumer.close()
