@@ -532,7 +532,7 @@ def main():
     stock_choice = st.sidebar.selectbox("Mã Cổ Phiếu", list(VIETNAM_STOCKS.keys()))
     symbol = VIETNAM_STOCKS[stock_choice]
     
-    k_status = "🟢 Kết nối tốt" if st.session_state.kafka_data else "Kết nối"
+    k_status = "🟢 Kết nối tốt" if st.session_state.kafka_data else "🟢 Kết nối"
     if not KAFKA_AVAILABLE: k_status = "🔴 Lỗi thư viện Kafka"
     st.sidebar.info(f"Real-time Stream: {k_status}")
     
@@ -591,7 +591,10 @@ def main():
                 st.write(f"Tìm thấy {len(news_list)} tin mới nhất:")
                 for i, n in enumerate(news_list):
                     key = f"news_{symbol}_{i}_{n.get('postID', 'no_id')}"
-                    with st.expander(f"**{n.get('date')} | {n.get('title', 'Bản tin')}**", expanded=False):
+                    # date from '2023-10-05 00:00:00' to '05-10-2023'
+                    date_str = n.get('date')
+                    date_str = date_str.split(" ")[0] if date_str else "N/A"
+                    with st.expander(f"**{date_str} | {n.get('title', 'Bản tin')}**", expanded=False):
                         st.write(n.get('description') or "Không có mô tả.")
                         if n.get('originalContent'): st.caption("Nội dung gốc:"); st.text(n.get('originalContent'))
                         st.divider()
