@@ -11,6 +11,11 @@ from vnstock import Trading
 import logging
 import os
 
+from dotenv import load_dotenv
+load_dotenv()
+
+KAFKA_SERVER = os.getenv('KAFKA_SERVER', 'localhost:9092')
+
 # Clean logging setup
 logging.basicConfig(
     level=logging.INFO,
@@ -27,7 +32,7 @@ logging.getLogger('vnstock').setLevel(logging.WARNING)
 PORTFOLIO_STOCKS = ["FPT", "SSI", "VCB", "VHM", "HPG", "GAS", "MSN", "MWG", "GVR", "VIC"]
 
 class StockPriceProducer:
-    def __init__(self, bootstrap_servers='localhost:9092', topic='stock-prices'):
+    def __init__(self, bootstrap_servers=KAFKA_SERVER, topic='stock-prices'):
         """
         Khởi tạo Kafka Producer cho stock prices
         
@@ -145,7 +150,7 @@ class StockPriceProducer:
 
 if __name__ == "__main__":
     producer = StockPriceProducer(
-        bootstrap_servers='localhost:9092',
+        bootstrap_servers=KAFKA_SERVER,
         topic='stock-prices'
     )
     
