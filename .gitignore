@@ -46,3 +46,9 @@ network_HPG.html
 network_MWG.html
 network_GVR.html
 network_VHM.html
+
+# ignore .css and .js files
+
+
+# ignore files in "Project/lib" directory
+Project/lib/*

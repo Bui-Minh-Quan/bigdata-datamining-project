@@ -217,5 +217,5 @@ def main_news_crawling(target_day=None):
 
 if __name__ == "__main__":
     # Test chạy
-    target_date_str = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
+    target_date_str = (datetime.now() - timedelta(days=50)).strftime("%Y-%m-%d")
     main_news_crawling(target_date_str)

@@ -464,10 +464,7 @@ def create_chart(df, symbol):
     return fig
 
 def main():
-    warnings.filterwarnings("ignore")
-    warnings.simplefilter(action='ignore', category=FutureWarning)
-    warnings.simplefilter(action='ignore', category=UserWarning)
-    warnings.simplefilter(action='ignore', category=DeprecationWarning)
+
     
     st.title("📈 Vietnam Stock AI Dashboard")
     
@@ -506,9 +503,14 @@ def main():
             st.session_state.ai_is_running = False
     
     st.sidebar.header("Cấu hình")
+    st.sidebar.subheader("Điều hướng")
+    st.sidebar.page_link("vietnam_stock_dashboard.py", label="Trang chủ Dashboard", icon="🏠")
+    st.sidebar.page_link("pages/history_view.py", label="Xem Lịch sử & Đánh giá", icon="📜")
+    st.sidebar.divider()
     st.sidebar.subheader("🤖 AI Analyst")
     
     # Logic visualize when clock the button 
+    st.sidebar.page_link("pages/history_view.py", label="Xem Lịch sử & Đánh giá", icon="📜")
     if st.session_state.ai_is_running:
         # Hiển thị thanh loading
         st.sidebar.progress(st.session_state.ai_progress)
@@ -517,9 +519,6 @@ def main():
         current_pct = st.session_state.ai_progress
         
         st.sidebar.caption(f"{st.session_state.ai_log}")
-        
-        
-    
     else:
         if st.sidebar.button("⚡ Dự đoán xu hướng", type="primary", key="btn_predict"):
             if run_full_pipeline is None:
@@ -603,8 +602,7 @@ def main():
                     date_str = n.get('date')
                     date_str = date_str.split(" ")[0] if date_str else "N/A"
                     with st.expander(f"**{date_str} | {n.get('title', 'Bản tin')}**", expanded=False):
-                        st.write(n.get('description') or "Không có mô tả.")
-                        if n.get('originalContent'): st.caption("Nội dung gốc:"); st.text(n.get('originalContent'))
+                        if n.get('originalContent'): st.text(n.get('originalContent'))
                         st.divider()
         else: news_cont.info(f"📭 Hiện chưa có tin tức nào cho {symbol}.")
 
