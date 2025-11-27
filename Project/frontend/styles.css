@@ -76,7 +76,7 @@ section[data-testid="stSidebar"] h3 {
     top: 0;
     left: 0;
     right: 0;
-    z-index: 999999;
+    z-index: 9999;
     background: linear-gradient(135deg, #1e3a5f 0%, #0d2137 100%);
     padding: 10px 20px;
     display: flex;
@@ -177,7 +177,7 @@ div[data-testid="stPopover"] {
     right: 20px !important;
     left: auto !important;
     width: auto !important;
-    z-index: 9999999 !important;
+    z-index: 10000 !important;
     transform: none !important;
 }
 
