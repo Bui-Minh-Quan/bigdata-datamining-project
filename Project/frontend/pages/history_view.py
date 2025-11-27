@@ -194,8 +194,17 @@ try:
             filtered_df = filtered_df.sort_values(by='Ngày dự đoán', ascending=False)
         else:
             filtered_df = filtered_df.sort_values(by='Ngày dự đoán', ascending=True)
-            
+        
+        # remove rows if "Ngày dự đoán" >= "Ngày phiên sau"
+        filtered_df = filtered_df[filtered_df["Ngày dự đoán"] < filtered_df["Ngày phiên sau"]]
+        
         filtered_df['Ngày dự đoán'] = filtered_df['Ngày dự đoán'].dt.strftime('%Y-%m-%d')
+        filtered_df['Ngày phiên sau'] = pd.to_datetime(filtered_df['Ngày phiên sau']).dt.strftime('%Y-%m-%d')
+        
+        # multiply "Giá đóng phiên", "Giá phiên sau", "Thay đổi giá" by 1000 to convert to VND
+        filtered_df["Giá đóng phiên"] = filtered_df["Giá đóng phiên"] * 1000
+        filtered_df["Giá phiên sau"] = filtered_df["Giá phiên sau"] * 1000
+        filtered_df["Thay đổi giá"] = filtered_df["Thay đổi giá"] * 1000
         
         # --- METRICS SUMMARY ---
         valid_preds = filtered_df[filtered_df["Kết quả"].isin(["Đúng", "Sai"])]
@@ -229,9 +238,9 @@ try:
             column_config={
                 "Lý do tóm tắt": st.column_config.TextColumn("Lý do (Tóm tắt)", width="medium"),
                 "Độ tin cậy": st.column_config.TextColumn("Độ tin cậy", width="small"),
-                "Giá đóng phiên": st.column_config.NumberColumn("Giá dự đoán", format="%.2f ₫"),
+                "Giá đóng phiên": st.column_config.NumberColumn("Giá đóng ngày dự đoán", format="%.0f ₫"),
                 "Ngày phiên sau": st.column_config.TextColumn("Ngày phiên sau"),
-                "Giá phiên sau": st.column_config.NumberColumn("Giá phiên sau", format="%.0f ₫"),
+                "Giá phiên sau": st.column_config.NumberColumn("Giá đóng phiên sau", format="%.0f ₫"),
                 "Thay đổi giá": st.column_config.NumberColumn("Thay đổi", format="%.0f ₫"),
                 # Ẩn các cột dài hoặc không cần thiết trên bảng chính
                 "Lý do": None, 

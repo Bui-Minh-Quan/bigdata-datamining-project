@@ -509,8 +509,7 @@ def main():
     st.sidebar.divider()
     st.sidebar.subheader("🤖 AI Analyst")
     
-    # Logic visualize when clock the button 
-    st.sidebar.page_link("pages/history_view.py", label="Xem Lịch sử & Đánh giá", icon="📜")
+
     if st.session_state.ai_is_running:
         # Hiển thị thanh loading
         st.sidebar.progress(st.session_state.ai_progress)
