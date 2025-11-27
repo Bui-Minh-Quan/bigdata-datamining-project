@@ -1,0 +1,295 @@
+/* ================================================
+   Vietnam Stock Dashboard - Custom Styles
+   ================================================ */
+
+/* ================================================
+   1. GLOBAL / LIGHT MODE
+   ================================================ */
+:root {
+    color-scheme: light !important;
+}
+
+.stApp {
+    background-color: #f8fafc !important;
+}
+
+/* Hide footer only */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+
+/* General text colors for light mode */
+.stMarkdown, .stText, p, span, label {
+    color: #1e293b !important;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    color: #0f172a !important;
+}
+
+/* ================================================
+   2. STREAMLIT HEADER & SIDEBAR
+   ================================================ */
+
+/* Position Streamlit header BELOW our custom header */
+header[data-testid="stHeader"] {
+    background: white !important;
+    top: 100px !important;
+    height: 40px !important;
+    z-index: 999998 !important;
+    border-bottom: 1px solid #e2e8f0 !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05) !important;
+}
+
+/* Main container - add padding for both headers */
+.block-container {
+    padding-top: 150px !important;
+    padding-bottom: 2rem !important;
+    max-width: 100% !important;
+}
+
+/* Sidebar styling - position below both headers */
+section[data-testid="stSidebar"] {
+    background: #ffffff !important;
+    border-right: 1px solid #e2e8f0 !important;
+    top: 100px !important;
+    height: calc(100vh - 100px) !important;
+}
+
+section[data-testid="stSidebar"] > div {
+    padding-top: 1rem !important;
+}
+
+section[data-testid="stSidebar"] .stMarkdown {
+    color: #334155 !important;
+}
+
+section[data-testid="stSidebar"] h2, 
+section[data-testid="stSidebar"] h3 {
+    color: #1e293b !important;
+}
+
+/* ================================================
+   3. FIXED HEADER BAR
+   ================================================ */
+.fixed-header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 999999;
+    background: linear-gradient(135deg, #1e3a5f 0%, #0d2137 100%);
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    height: 100px;
+}
+
+/* When sidebar is open, push header */
+@media (min-width: 768px) {
+    section[data-testid="stSidebar"][aria-expanded="true"] ~ .fixed-header {
+        left: 20rem;
+        width: calc(100% - 20rem);
+    }
+}
+
+.header-left {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    margin-left: 0px;
+}
+
+.header-title {
+    color: #ffffff;
+    font-size: 1.3rem;
+    font-weight: 700;
+    margin: 0;
+    line-height: 1.2;
+}
+
+.header-subtitle {
+    color: #94a3b8;
+    font-size: 0.9rem;
+    font-weight: 500;
+    margin-top: 4px;
+}
+
+.header-metrics {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    height: 100%;
+    margin-right: 130px;
+}
+
+/* ================================================
+   4. METRIC CARDS
+   ================================================ */
+.metric-card {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 0 12px;
+    text-align: center;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    width: 110px;
+    height: 80px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+.metric-label {
+    color: #94a3b8;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+}
+
+.metric-value {
+    color: #ffffff;
+    font-size: 1.2rem;
+    font-weight: 800;
+    line-height: 1.2;
+}
+
+.metric-sub {
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-top: 2px;
+}
+
+.metric-sub.positive { color: #4ade80; }
+.metric-sub.negative { color: #f87171; }
+.metric-sub.neutral { color: #cbd5e1; }
+
+/* ================================================
+   5. AI POPOVER BUTTON
+   ================================================ */
+div[data-testid="stPopover"] {
+    position: fixed !important;
+    top: 10px !important;
+    right: 20px !important;
+    left: auto !important;
+    width: auto !important;
+    z-index: 9999999 !important;
+    transform: none !important;
+}
+
+div[data-testid="stPopover"] button {
+    background: rgba(255, 255, 255, 0.1) !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-radius: 8px !important;
+    padding: 0 !important;
+    width: 110px !important;
+    height: 80px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    align-items: center !important;
+    box-shadow: none !important;
+    transition: background 0.2s, transform 0.1s !important;
+    margin: 0 !important;
+}
+
+/* Hide the default dropdown arrow */
+div[data-testid="stPopover"] button svg {
+    display: none !important;
+}
+
+div[data-testid="stPopover"] button:hover {
+    background: rgba(255, 255, 255, 0.2) !important;
+    border-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+div[data-testid="stPopover"] button:active {
+    transform: scale(0.98) !important;
+}
+
+/* Label (Top) */
+div[data-testid="stPopover"] button::before {
+    content: "🤖 AI DỰ BÁO";
+    color: #94a3b8;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+    font-family: "Source Sans Pro", sans-serif;
+}
+
+/* Value (Middle - The button text) */
+div[data-testid="stPopover"] button div p {
+    color: #ffffff !important;
+    font-size: 1.1rem !important;
+    font-weight: 800 !important;
+    margin: 0 !important;
+    line-height: 1.2 !important;
+}
+
+/* Popover Body */
+div[data-testid="stPopoverBody"] {
+    min-width: 400px !important;
+    max-width: 500px !important;
+    padding: 20px !important;
+}
+
+/* Dialog/Modal styling */
+div[role="dialog"] {
+    background: white !important;
+    border-radius: 16px !important;
+}
+
+/* ================================================
+   6. NEWS ITEMS
+   ================================================ */
+/* Style expander headers for news items */
+.news-expander .streamlit-expanderHeader {
+    min-height: 70px !important;
+}
+
+.news-entry-header {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+}
+
+.news-entry-title {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: #1e293b;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-height: 2.8em;
+}
+
+.news-entry-date {
+    font-size: 0.75rem;
+    font-style: italic;
+    color: #64748b;
+    margin-top: 4px;
+}
+
+/* ================================================
+   7. GRAPH LEGEND
+   ================================================ */
+.graph-legend {
+    text-align: center;
+    margin-top: 10px;
+}
+
+.graph-legend .stock { color: #FF4B4B; font-weight: bold; }
+.graph-legend .article { color: #1E90FF; font-weight: bold; }
+.graph-legend .entity { color: #2E8B57; font-weight: bold; }
+.graph-legend .positive { color: #00CC00; }
+.graph-legend .negative { color: #FF0000; }
+

@@ -60,7 +60,16 @@ from vnstock import Quote
 from pymongo import MongoClient
 
 st.set_page_config(page_title="🚀 Vietnam Stock AI Dashboard", layout="wide", page_icon="📈")
-st.markdown("""<style>.stMetric {animation: none !important;} div[data-testid='stMetricValue'] {font-size: 22px; color: #333;} .css-1d391kg {padding-top: 1rem;}</style>""", unsafe_allow_html=True)
+
+# Load external CSS file
+def load_css():
+    css_file = os.path.join(os.path.dirname(__file__), "styles.css")
+    if os.path.exists(css_file):
+        with open(css_file, "r", encoding="utf-8") as f:
+            return f"<style>{f.read()}</style>"
+    return ""
+
+st.markdown(load_css(), unsafe_allow_html=True)
 
 VIETNAM_STOCKS = {
     'FPT - Công nghệ FPT': 'FPT', 'SSI - Chứng khoán SSI': 'SSI', 'VCB - Vietcombank': 'VCB', 
@@ -112,10 +121,10 @@ def get_ai_prediction(symbol):
     if db is None: return None
     return db['stock_predictions'].find_one({"symbol": symbol}, sort=[("date", -1), ("created_at", -1)])
 
-def get_news(symbol):
+def get_news(symbol, limit=30, skip=0):
     db = init_mongo()
     if db is None: return []
-    return list(db['news'].find({"taggedSymbols": symbol, "date": {"$exists": True}}).sort("date", -1).limit(10))
+    return list(db['news'].find({"taggedSymbols": symbol, "date": {"$exists": True}}).sort("date", -1).skip(skip).limit(limit))
 
 def get_neo4j_data(symbol):
     try:
@@ -464,10 +473,7 @@ def create_chart(df, symbol):
     return fig
 
 def main():
-
-    
-    st.title("📈 Vietnam Stock AI Dashboard")
-    
+    # --- SIDEBAR SETUP ---
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     try: 
         import main as pipeline_module
@@ -475,137 +481,254 @@ def main():
         run_full_pipeline = pipeline_module.run_full_pipeline
     except ImportError: run_full_pipeline = None
     
-    # --- [GEMINI EDIT START]: TRẠNG THÁI AI ---
-    # Khởi tạo các biến trong session_state để theo dõi tiến trình chạy ngầm
+    # Initialize session state for AI progress tracking
     if "ai_is_running" not in st.session_state: st.session_state.ai_is_running = False
     if "ai_log" not in st.session_state: st.session_state.ai_log = ""
     if "ai_progress" not in st.session_state: st.session_state.ai_progress = 0
     
-    # Danh sách các bước để hiển thị icon (Checklist)
-    
-    # Function to run AI pipeline in background thread
     def run_ai_background():
         try:
             def thread_callback(msg, pct):
                 st.session_state.ai_log = msg 
                 st.session_state.ai_progress = pct 
-            
-            # run heavy function
             run_full_pipeline(datetime.now().strftime("%Y-%m-%d"), progress_callback=thread_callback)
-            # when finished running 
             st.session_state.ai_log = "✅ Hoàn tất! Vui lòng đợi làm mới..."
             st.session_state.ai_progress = 100
             time.sleep(1)
             st.session_state.ai_is_running = False
-            
         except Exception as e:
             st.session_state.ai_log = f"❌ Lỗi: {str(e)}"
             st.session_state.ai_is_running = False
     
-    st.sidebar.header("Cấu hình")
-    st.sidebar.subheader("Điều hướng")
+    # Sidebar content
+    st.sidebar.header("⚙️ Cấu hình")
     st.sidebar.page_link("vietnam_stock_dashboard.py", label="Trang chủ Dashboard", icon="🏠")
     st.sidebar.page_link("pages/history_view.py", label="Xem Lịch sử & Đánh giá", icon="📜")
     st.sidebar.divider()
-    st.sidebar.subheader("🤖 AI Analyst")
     
-
+    stock_choice = st.sidebar.selectbox("📌 Mã cổ phiếu", list(VIETNAM_STOCKS.keys()))
+    symbol = VIETNAM_STOCKS[stock_choice]
+    
+    st.sidebar.divider()
+    st.sidebar.subheader("🤖 Phân tích AI")
+    
     if st.session_state.ai_is_running:
-        # Hiển thị thanh loading
         st.sidebar.progress(st.session_state.ai_progress)
-        
-        # Hiển thị Timeline (Các bước chạy)
-        current_pct = st.session_state.ai_progress
-        
         st.sidebar.caption(f"{st.session_state.ai_log}")
     else:
-        if st.sidebar.button("⚡ Dự đoán xu hướng", type="primary", key="btn_predict"):
+        if st.sidebar.button("⚡ Dự đoán xu hướng", type="primary", key="btn_predict", use_container_width=True):
             if run_full_pipeline is None:
                 st.sidebar.error("Không tìm thấy file main.py!")
             else:
-                # Start a new thread
                 st.session_state.ai_is_running = True
                 st.session_state.ai_progress = 0
                 st.session_state.ai_log = "Đang chạy dự đoán"
-                
                 t = threading.Thread(target=run_ai_background)
                 add_script_run_ctx(t)
                 t.start()
-                st.rerun() # Làm mới ngay để hiện thanh loading
+                st.rerun()
 
-    # --- [GEMINI EDIT END] ---
     st.sidebar.divider()
-    stock_choice = st.sidebar.selectbox("Mã Cổ Phiếu", list(VIETNAM_STOCKS.keys()))
-    symbol = VIETNAM_STOCKS[stock_choice]
+    k_status = "🟢 Kết nối tốt" if st.session_state.kafka_data else "🟢 Sẵn sàng"
+    if not KAFKA_AVAILABLE: k_status = "🔴 Lỗi Kafka"
+    st.sidebar.caption(f"Real-time: {k_status}")
     
-    k_status = "🟢 Kết nối tốt" if st.session_state.kafka_data else "🟢 Kết nối"
-    if not KAFKA_AVAILABLE: k_status = "🔴 Lỗi thư viện Kafka"
-    st.sidebar.info(f"Real-time Stream: {k_status}")
-    
-    if st.sidebar.button("Làm mới dữ liệu", key="btn_refresh"): st.rerun()
+    if st.sidebar.button("🔄 Làm mới dữ liệu", key="btn_refresh", use_container_width=True): 
+        st.rerun()
 
+    # --- FETCH DATA ---
     history_df, data_source = get_stock_history_hybrid(symbol)
     kafka_info = st.session_state.kafka_data.get(symbol, {})
     ai_pred = get_ai_prediction(symbol)
     news_list = get_news(symbol)
 
     if kafka_info:
-        price = kafka_info.get('price', 0); pct = kafka_info.get('percent_change', 0); vol = kafka_info.get('volume', 0); src_lbl = "⚡ Live (Kafka)"
+        price = kafka_info.get('price', 0)
+        pct = kafka_info.get('percent_change', 0)
+        vol = kafka_info.get('volume', 0)
+        src_lbl = "⚡ Live"
     elif not history_df.empty:
-        price = history_df.iloc[-1]['Close']; prev = history_df.iloc[-2]['Close'] if len(history_df)>1 else price
-        pct = ((price - prev) / prev) * 100; vol = history_df.iloc[-1]['Volume']; src_lbl = f"📊 Đóng cửa ({data_source})"
-    else: price = 0; pct = 0; vol = 0; src_lbl = "N/A"
+        price = history_df.iloc[-1]['Close']
+        prev = history_df.iloc[-2]['Close'] if len(history_df) > 1 else price
+        pct = ((price - prev) / prev) * 100
+        vol = history_df.iloc[-1]['Volume']
+        src_lbl = f"📊 {data_source}"
+    else:
+        price = 0; pct = 0; vol = 0; src_lbl = "N/A"
 
     trend = ai_pred.get('trend', 'UNKNOWN') if ai_pred else "UNKNOWN"
-    trend_map = {"INCREASE": ("🟢 TĂNG TRƯỞNG", "normal"), "DECREASE": ("🔴 GIẢM GIÁ", "inverse"), "SIDEWAYS": ("🟡 ĐI NGANG", "off"), "UNKNOWN": ("⚪ CHƯA RÕ", "off")}
-    t_text, t_color = trend_map.get(trend, trend_map["UNKNOWN"])
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("💰 Giá", f"{price:,.0f} ₫", f"{pct:.2f}%"); c1.caption(src_lbl)
-    c2.metric("📊 Volume", f"{vol:,.0f}")
+    trend_map = {
+        "INCREASE": "🟢 TĂNG", 
+        "DECREASE": "🔴 GIẢM", 
+        "SIDEWAYS": "🟡 ĐI NGANG", 
+        "UNKNOWN": "⚪ CHƯA RÕ"
+    }
+    t_text = trend_map.get(trend, trend_map["UNKNOWN"])
     
+    # Calculate RSI
     rsi = "N/A"
     if not history_df.empty and len(history_df) > 14:
-        delta = history_df['Close'].diff(); gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean(); rs = gain / loss
+        delta = history_df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rs = gain / loss
         rsi = f"{100 - (100 / (1 + rs)).iloc[-1]:.1f}"
-    c3.metric("⚡ RSI", rsi)
-    c4.metric("🤖 AI Dự báo", t_text)
 
-    t1, t2, t3, t4 = st.tabs(["🧠 Phân tích AI", "📉 Biểu đồ", "📰 Tin tức", "🔗 Đồ thị"])
+    # Get AI confidence
+    confidence = ai_pred.get('confidence', 'N/A') if ai_pred else 'N/A'
+    
+    # Format delta color
+    delta_class = "positive" if pct >= 0 else "negative"
+    delta_sign = "+" if pct >= 0 else ""
+    
+    # Format volume
+    vol_display = f"{vol/1e6:.1f}M" if vol >= 1e6 else f"{vol/1e3:.1f}K" if vol >= 1e3 else f"{vol:,.0f}"
+    
+    # Get stock full name
+    stock_full_name = stock_choice  # This includes both symbol and company name
 
-    with t1:
-        ai_cont = st.container()
-        if ai_pred:
-            with ai_cont:
-                st.subheader(f"Nhận định cho {symbol}"); st.caption(f"Ngày: {ai_pred.get('date')} | Tin cậy: {ai_pred.get('confidence')}")
-                reason = ai_pred.get('reasoning', '').replace("- ", "\n- ")
-                if trend == "INCREASE": st.success(reason)
-                elif trend == "DECREASE": st.error(reason)
-                else: st.warning(reason)
-                with st.expander("Dữ liệu thô"): st.code(ai_pred.get('full_analysis'))
-        else: ai_cont.info("Chưa có dữ liệu phân tích. Bấm nút 'Dự đoán xu hướng' bên trái để chạy.")
+    # --- FIXED HEADER (HTML) ---
+    # We render the Title and the first 3 metrics in HTML.
+    # The 4th metric (AI) will be injected via st.popover and positioned via CSS to sit next to them.
+    
+    header_html = f"""
+    <div class="fixed-header">
+        <div class="header-left">
+            <div class="header-title">📊 Dashboard Phân tích Chứng khoán Việt Nam</div>
+            <div class="header-subtitle">📌 {stock_full_name}</div>
+        </div>
+        <div class="header-metrics">
+            <div class="metric-card">
+                <div class="metric-label">💰 Giá CP</div>
+                <div class="metric-value">{price:,.0f}₫</div>
+                <div class="metric-sub {delta_class}">{delta_sign}{pct:.2f}%</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">📊 KLGD</div>
+                <div class="metric-value">{vol_display}</div>
+                <div class="metric-sub neutral">SMA20</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">⚡ RSI</div>
+                <div class="metric-value">{rsi}</div>
+                <div class="metric-sub neutral">14D</div>
+            </div>
+        </div>
+    </div>
+    """
+    st.markdown(header_html, unsafe_allow_html=True)
+    
+    # --- AI Popover Button ---
+    
+    ai_btn_label = f"{t_text}"
+    ai_confidence_str = f"Tự tin: {confidence}"
+    
+    # Inject dynamic CSS for AI confidence text (only the dynamic part)
+    st.markdown(f"""
+    <style>
+        /* Subtext (Bottom) - Dynamic content */
+        div[data-testid="stPopover"] button::after {{
+            content: "{ai_confidence_str}";
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #cbd5e1;
+            margin-top: 2px;
+            font-family: "Source Sans Pro", sans-serif;
+        }}
+    </style>
+    """, unsafe_allow_html=True)
+    
+    with st.popover(ai_btn_label):
+            if ai_pred:
+                st.markdown(f"### 🤖 Phân tích AI cho {symbol}")
+                st.caption(f"📅 Ngày: {ai_pred.get('date')} | 🎯 Độ tin cậy: {confidence}")
+                st.divider()
+                
+                reason = ai_pred.get('reasoning', 'Không có dữ liệu').replace("- ", "\n- ")
+                
+                if trend == "INCREASE":
+                    st.success(f"**Xu hướng: TĂNG**")
+                    st.markdown(reason)
+                elif trend == "DECREASE":
+                    st.error(f"**Xu hướng: GIẢM**")
+                    st.markdown(reason)
+                else:
+                    st.warning(f"**Xu hướng: {t_text}**")
+                    st.markdown(reason)
+                
+                with st.expander("📄 Dữ liệu thô"):
+                    st.code(ai_pred.get('full_analysis', 'N/A'))
+            else:
+                st.info("Chưa có dữ liệu phân tích AI.\n\nBấm '⚡ Dự đoán xu hướng' ở sidebar để chạy.")
+
+    t2, t3 = st.tabs(["📊 Thị trường & Tin tức", "🔗 Đồ thị"])
 
     with t2:
-        if not history_df.empty: st.plotly_chart(create_chart(history_df, symbol), width="stretch"); st.caption(f"Nguồn: {data_source}")
-        else: st.warning("Chưa có dữ liệu giá.")
+        # Create 70-30 split: Chart on left, News feed on right
+        col_chart, col_news = st.columns([7, 3])
+        
+        with col_chart:
+            st.subheader("📉 Biểu đồ giá")
+            if not history_df.empty:
+                # Update chart height to be taller
+                fig = create_chart(history_df, symbol)
+                fig.update_layout(height=800)
+                st.plotly_chart(fig, width="stretch")
+                st.caption(f"Nguồn: {data_source}")
+            else: 
+                st.warning("Chưa có dữ liệu giá.")
+        
+        with col_news:
+            st.subheader("📰 Tin tức")
+            
+            # Initialize news pagination in session state
+            if f"news_count_{symbol}" not in st.session_state:
+                st.session_state[f"news_count_{symbol}"] = 30
+            
+            # Fetch news with current limit
+            news_list = get_news(symbol, limit=st.session_state[f"news_count_{symbol}"])
+            
+            if news_list:
+                
+                # Make news section scrollable with fixed height matching chart
+                with st.container(height=750):
+                    for i, n in enumerate(news_list):
+                        # Format date
+                        date_raw = n.get('date', '')
+                        try:
+                            if isinstance(date_raw, str):
+                                if " " in date_raw:
+                                    news_dt = datetime.strptime(date_raw, "%Y-%m-%d %H:%M:%S")
+                                else:
+                                    news_dt = datetime.strptime(date_raw, "%Y-%m-%d")
+                                date_formatted = news_dt.strftime("%d/%m/%Y")
+                            else:
+                                date_formatted = date_raw.strftime("%d/%m/%Y")
+                        except:
+                            date_formatted = str(date_raw)[:16] if date_raw else "N/A"
+                        
+                        title = n.get('title', 'Bản tin')
+                        
+                        # Create formatted label with title (2 lines max) and date
+                        # Truncate title for display in header
+                        title_display = title[:100] + "..." if len(title) > 100 else title
+                        expander_label = f"{title_display}\n\n📅 *{date_formatted}*"
+                        
+                        # Use expander with custom styling
+                        with st.expander(expander_label, expanded=False):
+                            # Show full content without truncation
+                            if n.get('originalContent'): 
+                                st.text(n.get('originalContent'))
+                    
+                    # Load more button at the end
+                    st.divider()
+                    if st.button("📥 Tải thêm tin tức", key=f"load_more_{symbol}", use_container_width=True):
+                        st.session_state[f"news_count_{symbol}"] += 30
+                        st.rerun()
+            else: 
+                st.info(f"📭 Chưa có tin tức cho {symbol}")
 
     with t3:
-        news_cont = st.container()
-        if news_list:
-            with news_cont:
-                st.write(f"Tìm thấy {len(news_list)} tin mới nhất:")
-                for i, n in enumerate(news_list):
-                    key = f"news_{symbol}_{i}_{n.get('postID', 'no_id')}"
-                    # date from '2023-10-05 00:00:00' to '05-10-2023'
-                    date_str = n.get('date')
-                    date_str = date_str.split(" ")[0] if date_str else "N/A"
-                    with st.expander(f"**{date_str} | {n.get('title', 'Bản tin')}**", expanded=False):
-                        if n.get('originalContent'): st.text(n.get('originalContent'))
-                        st.divider()
-        else: news_cont.info(f"📭 Hiện chưa có tin tức nào cho {symbol}.")
-
-    with t4:
         rels = get_neo4j_data(symbol)
         if rels:
             st.caption("💡 Bạn có thể kéo thả các node, lăn chuột để zoom.")
@@ -628,20 +751,21 @@ def main():
                 
                 # Chú thích thủ công bên dưới (Vì PyVis legend hơi khó chỉnh)
                 st.markdown("""
-                <div style="text-align: center; margin-top: 10px;">
-                    <span style='color:#FF4B4B; font-weight:bold'>★ Stock</span> &nbsp;|&nbsp; 
-                    <span style='color:#1E90FF; font-weight:bold'>■ Article</span> &nbsp;|&nbsp; 
-                    <span style='color:#2E8B57; font-weight:bold'>● Entity</span> <br>
-                    <span style='color:#00CC00'>── Positive Impact</span> &nbsp;|&nbsp; 
-                    <span style='color:#FF0000'>── Negative Impact</span>
+                <div class="graph-legend">
+                    <span class="stock">★ Stock</span> &nbsp;|&nbsp; 
+                    <span class="article">■ Article</span> &nbsp;|&nbsp; 
+                    <span class="entity">● Entity</span> <br>
+                    <span class="positive">── Positive Impact</span> &nbsp;|&nbsp; 
+                    <span class="negative">── Negative Impact</span>
                 </div>
                 """, unsafe_allow_html=True)
             
         else: 
             st.warning("Không có dữ liệu đồ thị.")
 
-    time.sleep(2)
-    st.rerun()
+    # Auto-refresh removed to prevent constant reloading/fading
+    # time.sleep(2)
+    # st.rerun()
 
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
