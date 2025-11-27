@@ -1,7 +1,15 @@
 import os
 import time
 from dotenv import load_dotenv
-import google.generativeai as genai
+try:
+    import google.generativeai as genai
+except ImportError:
+    print("Trying newer version of Google Gemini AI Library...")
+    from google import genai
+except Exception as e:
+    print(f"Error importing google.generativeai: {e}")
+    raise e
+
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 # Load environment variables
