@@ -1,10 +1,13 @@
 from pymongo import MongoClient
 from dotenv import load_dotenv
 import os
+
+load_dotenv()
+
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
 def get_mongo_client():
     # Local MongoDB mặc định chạy ở port 27017
-    mongo_url = os.getenv("MONGO_URL", "mongodb://localhost:27017")
-    
+    mongo_url = MONGO_URI
     client = MongoClient(mongo_url)
     print(f"Connected to MongoDB at {mongo_url}")
     return client
