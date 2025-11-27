@@ -607,6 +607,10 @@ def main():
     # We render the Title and the first 3 metrics in HTML.
     # The 4th metric (AI) will be injected via st.popover and positioned via CSS to sit next to them.
     
+    # Get current time for header display
+    current_time = datetime.now().strftime("%H:%M")
+    current_date = datetime.now().strftime("%d/%m/%Y")
+    
     header_html = f"""
     <div class="fixed-header">
         <div class="header-left">
@@ -614,6 +618,11 @@ def main():
             <div class="header-subtitle">📌 {stock_full_name}</div>
         </div>
         <div class="header-metrics">
+            <div class="metric-card">
+                <div class="metric-label">🕐 Thời gian</div>
+                <div class="metric-value">{current_time}</div>
+                <div class="metric-sub neutral">{current_date}</div>
+            </div>
             <div class="metric-card">
                 <div class="metric-label">💰 Giá CP</div>
                 <div class="metric-value">{price:,.0f}₫</div>
@@ -657,7 +666,7 @@ def main():
     with st.popover(ai_btn_label):
             if ai_pred:
                 st.markdown(f"### 🤖 Phân tích AI cho {symbol}")
-                st.caption(f"📅 Ngày: {ai_pred.get('date')} | 🎯 Độ tin cậy: {confidence}")
+                st.caption(f"📅 Ngày: {ai_pred.get('date')} | 🎯 Độ tự tin: {confidence}")
                 st.divider()
                 
                 reason = ai_pred.get('reasoning', 'Không có dữ liệu').replace("- ", "\n- ")
@@ -767,12 +776,12 @@ def main():
                 
                 # Chú thích thủ công bên dưới (Vì PyVis legend hơi khó chỉnh)
                 st.markdown("""
-                <div class="graph-legend">
-                    <span class="stock">★ Stock</span> &nbsp;|&nbsp; 
-                    <span class="article">■ Article</span> &nbsp;|&nbsp; 
-                    <span class="entity">● Entity</span> <br>
-                    <span class="positive">── Positive Impact</span> &nbsp;|&nbsp; 
-                    <span class="negative">── Negative Impact</span>
+                <div style="text-align: center; margin-top: 10px;">
+                    <span style='color:#FF4B4B; font-weight:bold'>★ Cổ phiếu</span> &nbsp;|&nbsp; 
+                    <span style='color:#1E90FF; font-weight:bold'>■ Bài báo</span> &nbsp;|&nbsp; 
+                    <span style='color:#2E8B57; font-weight:bold'>● Thực thể</span> <br>
+                    <span style='color:#00CC00'>── Ảnh hưởng Tích cực</span> &nbsp;|&nbsp; 
+                    <span style='color:#FF0000'>── Ảnh hưởng Tiêu cực</span>
                 </div>
                 """, unsafe_allow_html=True)
             
@@ -780,8 +789,8 @@ def main():
             st.warning("Không có dữ liệu đồ thị.")
 
     # Auto-refresh removed to prevent constant reloading/fading
-    # time.sleep(2)
-    # st.rerun()
+    time.sleep(12)
+    st.rerun()
 
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
