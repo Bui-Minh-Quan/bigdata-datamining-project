@@ -463,13 +463,29 @@ while not st.session_state.data_queue.empty():
 # ==========================================
 def create_chart(df, symbol):
     if df.empty: return go.Figure()
+    
+    # Filter out rows with missing data
+    df = df.dropna(subset=['Open', 'High', 'Low', 'Close'])
+    
     df['SMA20'] = df['Close'].rolling(window=20).mean()
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
     fig.add_trace(go.Candlestick(x=df['Date'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Giá'), row=1, col=1)
     fig.add_trace(go.Scatter(x=df['Date'], y=df['SMA20'], line=dict(color='orange', width=1), name='SMA 20'), row=1, col=1)
     colors = ['green' if o < c else 'red' for o, c in zip(df['Open'], df['Close'])]
     fig.add_trace(go.Bar(x=df['Date'], y=df['Volume'], marker_color=colors, name='Vol'), row=2, col=1)
-    fig.update_layout(height=500, title=f"Biểu đồ giá {symbol}", xaxis_rangeslider_visible=False)
+    
+    # Remove gaps for weekends and holidays by using rangebreaks
+    fig.update_xaxes(
+        rangebreaks=[
+            dict(bounds=["sat", "mon"]),  # Hide weekends (Saturday to Monday)
+        ]
+    )
+    
+    fig.update_layout(
+        height=500, 
+        title=f"Biểu đồ giá {symbol}", 
+        xaxis_rangeslider_visible=False
+    )
     return fig
 
 def main():
@@ -606,12 +622,12 @@ def main():
             <div class="metric-card">
                 <div class="metric-label">📊 KLGD</div>
                 <div class="metric-value">{vol_display}</div>
-                <div class="metric-sub neutral">SMA20</div>
+                <div class="metric-sub neutral">cổ phiếu</div>
             </div>
             <div class="metric-card">
                 <div class="metric-label">⚡ RSI</div>
                 <div class="metric-value">{rsi}</div>
-                <div class="metric-sub neutral">14D</div>
+                <div class="metric-sub neutral">14 ngày</div>
             </div>
         </div>
     </div>
