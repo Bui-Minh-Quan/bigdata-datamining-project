@@ -181,7 +181,7 @@ def calculate_fear_greed_index(doc):
 
     # --- LOGIC TÍNH TOÁN ---
     # Giảm trọng số Neutral xuống còn 0.25
-    NEUTRAL_WEIGHT = 0.25
+    NEUTRAL_WEIGHT = 0.05
     
     # Tổng hiệu dụng (Effective Total)
     effective_total = pos + neg + (neu * NEUTRAL_WEIGHT)
@@ -199,11 +199,11 @@ def calculate_fear_greed_index(doc):
     index_score = max(0, min(100, index_score))
     
     # Gán nhãn
-    if index_score <= 20: label = "Extreme Fear"
-    elif index_score <= 40: label = "Fear"
-    elif index_score <= 60: label = "Neutral"
-    elif index_score <= 80: label = "Greed"
-    else: label = "Extreme Greed"
+    if index_score <= 20: label = "Rất sợ hãi"
+    elif index_score <= 35: label = "Sợ hãi"
+    elif index_score <= 65: label = "Trung lập"
+    elif index_score <= 80: label = "Hưng phấn"
+    else: label = "Rất hưng phấn"
     
     return index_score, label, doc.get('date')
 # -----------------------------
@@ -543,8 +543,8 @@ def main():
     
     # [MỚI] Xử lý màu sắc cho Sentiment Index
     fg_color_class = "neutral"
-    if fg_score >= 60: fg_color_class = "positive" # Xanh
-    elif fg_score <= 40: fg_color_class = "negative" # Đỏ
+    if fg_score >= 65: fg_color_class = "positive" # Xanh
+    elif fg_score <= 35: fg_color_class = "negative" # Đỏ
 
     # Format volume
     vol_display = f"{vol/1e6:.1f}M" if vol >= 1e6 else f"{vol/1e3:.1f}K" if vol >= 1e3 else f"{vol:,.0f}"
@@ -580,8 +580,8 @@ def main():
                 <div class="metric-sub neutral">cổ phiếu</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">🧠 Tâm lý (F&G)</div>
-                <div class="metric-value" style="font-size: 1.5rem;">{fg_score}/100</div>
+                <div class="metric-label">🧠 Tâm lý</div>
+                <div class="metric-value">{fg_score}/100</div>
                 <div class="metric-sub {fg_color_class}">{fg_label}</div>
             </div>
             <div class="metric-card">
