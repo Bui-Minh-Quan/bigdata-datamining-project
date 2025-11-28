@@ -111,23 +111,58 @@ def init_mongo():
 # --- [NEW] Sentiment Logic ---
 def get_sentiment_snapshot(symbol):
     """
-    Lấy dữ liệu sentiment mới nhất từ MongoDB
+    Lấy và tổng hợp dữ liệu sentiment trong 7 ngày gần nhất từ MongoDB
     """
     db = init_mongo()
     if db is None: return None
     
     col = db['sentiment_from_posts']
     
-    # Crawler thường lưu tag dạng "$FPT", nhưng input của ta là "FPT"
-    # Ta sẽ thử query cả 2 trường hợp để chắc chắn
-    query_variants = [symbol, f"${symbol}"]
+    # 1. Xác định khung thời gian (7 ngày trước)
+    # Lưu ý: Định dạng ngày trong DB là String "YYYY-MM-DD" nên ta so sánh chuỗi được
+    seven_days_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
     
-    # Sort theo date giảm dần để lấy ngày mới nhất
-    doc = col.find_one(
-        {"taggedSymbols": {"$in": query_variants}}, 
-        sort=[("date", -1)]
-    )
-    return doc
+    # 2. Query tìm tất cả các bản ghi trong 7 ngày qua
+    query_variants = [symbol, f"${symbol}"]
+    cursor = col.find({
+        "taggedSymbols": {"$in": query_variants},
+        "date": {"$gte": seven_days_ago} # Lấy ngày >= 7 ngày trước
+    })
+    
+    # 3. Cộng dồn (Aggregate) số liệu
+    aggregated_doc = {
+        "positive_posts": 0,
+        "negative_posts": 0,
+        "neutral_posts": 0,
+        "total_posts": 0,
+        "date": datetime.now().strftime("%Y-%m-%d"), # Mặc định là hôm nay
+        "taggedSymbols": symbol
+    }
+    
+    count = 0
+    latest_date_found = ""
+
+    for doc in cursor:
+        count += 1
+        aggregated_doc["positive_posts"] += doc.get("positive_posts", 0)
+        aggregated_doc["negative_posts"] += doc.get("negative_posts", 0)
+        aggregated_doc["neutral_posts"] += doc.get("neutral_posts", 0)
+        aggregated_doc["total_posts"] += doc.get("total_posts", 0)
+        
+        # Cập nhật ngày mới nhất tìm thấy để hiển thị cho đúng thực tế
+        doc_date = doc.get("date", "")
+        if doc_date > latest_date_found:
+            latest_date_found = doc_date
+
+    # Nếu không tìm thấy bài nào trong 7 ngày
+    if count == 0:
+        return None
+        
+    # Gán ngày hiển thị là ngày có dữ liệu mới nhất (thay vì ngày hiện tại)
+    if latest_date_found:
+        aggregated_doc["date"] = latest_date_found
+        
+    return aggregated_doc
 
 def calculate_fear_greed_index(doc):
     """
