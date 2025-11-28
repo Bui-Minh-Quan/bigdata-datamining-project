@@ -35,7 +35,7 @@ st.title("📜 Lịch sử & Đánh giá độ chính xác AI")
 st.markdown("---")
 
 # --- HÀM XỬ LÝ DỮ LIỆU (ĐÃ TỐI ƯU) ---
-@st.cache_data(ttl=300) # Cache 5 phút để giảm tải cho DB
+@st.cache_data(ttl=1000) # Cache 5 phút để giảm tải cho DB
 def load_and_process_data():
     db = get_database()
     if db is None: 

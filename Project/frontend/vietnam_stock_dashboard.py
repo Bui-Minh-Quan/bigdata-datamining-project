@@ -71,6 +71,30 @@ def load_css():
 
 st.markdown(load_css(), unsafe_allow_html=True)
 
+# CSS bổ sung để căn chỉnh 5 cột trên Header
+st.markdown("""
+<style>
+    .header-metrics {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr); 
+        gap: 15px;
+        align-items: center;
+        margin-right: 130px;
+        height: 100%;
+    }
+    /* Responsive cho màn nhỏ: Gom lại */
+    @media (max-width: 1200px) {
+        .header-metrics {
+            grid-template-columns: repeat(3, 1fr);
+            margin-right: 20px;
+        }
+        .metric-card {
+            width: 100%;
+        }
+    }
+</style>
+""", unsafe_allow_html=True)
+
 VIETNAM_STOCKS = {
     'FPT - Công nghệ FPT': 'FPT', 'SSI - Chứng khoán SSI': 'SSI', 'VCB - Vietcombank': 'VCB', 
     'VHM - Vinhomes': 'VHM', 'HPG - Hòa Phát': 'HPG', 'GAS - PV Gas': 'GAS',
@@ -83,6 +107,71 @@ VIETNAM_STOCKS = {
 @st.cache_resource
 def init_mongo():
     return get_database()
+
+# --- [NEW] Sentiment Logic ---
+def get_sentiment_snapshot(symbol):
+    """
+    Lấy dữ liệu sentiment mới nhất từ MongoDB
+    """
+    db = init_mongo()
+    if db is None: return None
+    
+    col = db['sentiment_from_posts']
+    
+    # Crawler thường lưu tag dạng "$FPT", nhưng input của ta là "FPT"
+    # Ta sẽ thử query cả 2 trường hợp để chắc chắn
+    query_variants = [symbol, f"${symbol}"]
+    
+    # Sort theo date giảm dần để lấy ngày mới nhất
+    doc = col.find_one(
+        {"taggedSymbols": {"$in": query_variants}}, 
+        sort=[("date", -1)]
+    )
+    return doc
+
+def calculate_fear_greed_index(doc):
+    """
+    Tính chỉ số Fear & Greed (0-100)
+    """
+    if not doc:
+        return 50, "N/A", "Unknown"
+        
+    pos = doc.get('positive_posts', 0)
+    neg = doc.get('negative_posts', 0)
+    neu = doc.get('neutral_posts', 0)
+    total_raw = doc.get('total_posts', 0)
+    
+    if total_raw == 0:
+        return 50, "Neutral", "No Data"
+
+    # --- LOGIC TÍNH TOÁN ---
+    # Giảm trọng số Neutral xuống còn 0.25
+    NEUTRAL_WEIGHT = 0.25
+    
+    # Tổng hiệu dụng (Effective Total)
+    effective_total = pos + neg + (neu * NEUTRAL_WEIGHT)
+    
+    if effective_total == 0:
+        return 50, "Neutral", doc.get('date')
+
+    # Raw score chạy từ -1 đến 1
+    raw_score = (pos - neg) / effective_total
+    
+    # Chuẩn hóa về 0 - 100
+    index_score = int((raw_score + 1) * 50)
+    
+    # Giới hạn min/max (phòng trường hợp float sai số nhẹ)
+    index_score = max(0, min(100, index_score))
+    
+    # Gán nhãn
+    if index_score <= 20: label = "Extreme Fear"
+    elif index_score <= 40: label = "Fear"
+    elif index_score <= 60: label = "Neutral"
+    elif index_score <= 80: label = "Greed"
+    else: label = "Extreme Greed"
+    
+    return index_score, label, doc.get('date')
+# -----------------------------
 
 def get_stock_history_hybrid(symbol, days=90):
     try:
@@ -132,11 +221,7 @@ def get_neo4j_data(symbol):
         with driver.session() as session:
             q = """
             MATCH (s:Stock {name: $sym})
-
-            // 1. Tìm TẤT CẢ đường dẫn (1..2 hops)
             MATCH path = (source)-[*1..2]->(s)
-
-            // 2. Blacklist (Giữ nguyên logic của bạn)
             WHERE source <> s 
             AND NONE(n IN nodes(path) WHERE n.name IN [
                 'Thị trường chứng khoán', 'Thị trường', 'Việt Nam', 'Kinh tế', 
@@ -144,29 +229,14 @@ def get_neo4j_data(symbol):
                 'Doanh nghiệp', 'Nhà đầu tư', 'Cổ phiếu', 'Tin tức', 'Chính phủ',
                 'Ngân sách nhà nước', 'Thị trường bất động sản'
             ])
-
-            // 3. Chuẩn bị dữ liệu để phân loại
             WITH path, length(path) as hops, relationships(path)[-1] as direct_rel
             WHERE direct_rel.date IS NOT NULL
-            
-            // Sắp xếp chung toàn bộ theo thời gian giảm dần trước
             ORDER BY direct_rel.date DESC
-
-            // 4. [LOGIC MỚI] GOM NHÓM VÀ CẮT RIÊNG (QUOTA)
-            // Gom tất cả lại thành một danh sách
             WITH collect({path: path, hops: hops}) as all_paths
-            
-            // Lọc ra danh sách trực tiếp và lấy Top 70
             WITH [x IN all_paths WHERE x.hops = 1][0..70] as direct_paths,
-                 
-            // Lọc ra danh sách gián tiếp và lấy Top 30
                  [x IN all_paths WHERE x.hops = 2][0..30] as indirect_paths
-
-            // Gộp 2 danh sách lại (Tổng cộng tối đa 100, nhưng đảm bảo luôn có cả 2 loại)
             UNWIND (direct_paths + indirect_paths) as item
             WITH item.path as path
-
-            // 5. Bung ra để trả về (Giữ nguyên)
             UNWIND relationships(path) as r
             WITH startNode(r) as src, endNode(r) as tgt, r
             
@@ -184,179 +254,14 @@ def get_neo4j_data(symbol):
     except Exception as e:
         print(f"Neo4j Error: {e}")
         return []
+
 # ==========================================
-# 3. ADVANCED GRAPH VISUALIZATION
+# 3. GRAPH VISUALIZATION
 # ==========================================
 
 def shorten_text(text, max_len=20):
     if not text: return "Unknown"
     return text[:max_len] + "..." if len(text) > max_len else text
-
-def create_network_graph(data, center_node_id):
-    if not data: return None
-
-    G = nx.DiGraph() # Đồ thị có hướng
-    
-    # Màu sắc Node
-    node_colors_map = {
-        'Stock': '#FF4B4B',      # Đỏ đậm
-        'Article': '#1E90FF',    # Xanh dương
-        'Entity': '#2E8B57',     # Xanh lá
-        'Unknown': '#808080'
-    }
-    
-    # Màu sắc Edge (Impact)
-    edge_colors_map = {
-        'POSITIVE': '#00CC00',   # Xanh lá tươi
-        'NEGATIVE': '#FF0000',   # Đỏ tươi
-        'RELATED': '#AAAAAA'     # Xám
-    }
-
-    # 1. Xây dựng Graph từ Data
-    for item in data:
-        # Xử lý Source Node
-        src_labels = item.get('src_labels', [])
-        src_type = 'Article' if 'Article' in src_labels else ('Stock' if 'Stock' in src_labels else 'Entity')
-        src_name = item.get('src_title') if src_type == 'Article' else item.get('src_name')
-        if not src_name: src_name = "Unknown"
-        
-        # Xử lý Target Node
-        tgt_labels = item.get('tgt_labels', [])
-        tgt_type = 'Article' if 'Article' in tgt_labels else ('Stock' if 'Stock' in tgt_labels else 'Entity')
-        tgt_name = item.get('tgt_title') if tgt_type == 'Article' else item.get('tgt_name')
-        if not tgt_name: tgt_name = "Unknown"
-        
-        # Xử lý Edge
-        impact = item.get('impact', 'RELATED')
-        if not impact: impact = 'RELATED'
-        desc = item.get('description', '')
-        date = item.get('date', '')
-        
-        # Add Nodes
-        G.add_node(src_name, type=src_type, color=node_colors_map.get(src_type, '#888'), full_name=src_name)
-        G.add_node(tgt_name, type=tgt_type, color=node_colors_map.get(tgt_type, '#888'), full_name=tgt_name)
-        
-        # Add Edge (có hướng)
-        G.add_edge(src_name, tgt_name, 
-                   color=edge_colors_map.get(impact, '#888'),
-                   desc=f"[{impact}] {desc} ({date})")
-
-    # 2. Tính toán Layout
-    pos = nx.spring_layout(G, k=0.7, iterations=60, seed=42)
-
-    # 3. Vẽ Edges (Tách thành 3 nhóm màu để vẽ Legend nếu cần, ở đây vẽ gộp nhưng chỉnh màu từng line)
-    # Plotly không hỗ trợ màu từng dòng trong 1 trace tối ưu, nên ta vẽ mũi tên bằng Annotations
-    
-    edge_traces = []
-    # Vẽ đường thẳng (Edge lines) - mờ hơn để làm nền cho mũi tên
-    for edge in G.edges(data=True):
-        x0, y0 = pos[edge[0]]
-        x1, y1 = pos[edge[1]]
-        color = edge[2]['color']
-        desc = edge[2]['desc']
-        
-        trace = go.Scatter(
-            x=[x0, x1, None], y=[y0, y1, None],
-            line=dict(width=1.5, color=color),
-            hoverinfo='text',
-            text=[desc, desc, ""],
-            mode='lines',
-            opacity=0.8,
-            showlegend=False
-        )
-        edge_traces.append(trace)
-
-    # 4. Vẽ Nodes
-    node_x, node_y, node_text, node_colors, node_sizes, node_labels = [], [], [], [], [], []
-    
-    for node in G.nodes(data=True):
-        x, y = pos[node[0]]
-        node_x.append(x); node_y.append(y)
-        
-        n_type = node[1].get('type', 'Unknown')
-        full_name = node[1].get('full_name', '')
-        
-        # Label hiển thị trên đồ thị (ngắn gọn)
-        label_show = shorten_text(full_name, 25) if n_type == 'Article' else full_name
-        node_labels.append(label_show)
-        
-        # Tooltip (chi tiết)
-        hover_str = f"<b>{full_name}</b><br>Type: {n_type}"
-        node_text.append(hover_str)
-        
-        node_colors.append(node[1].get('color', '#888'))
-        # Node trung tâm (Stock) to hơn
-        size = 40 if n_type == 'Stock' else (25 if n_type == 'Entity' else 20)
-        node_sizes.append(size)
-
-    node_trace = go.Scatter(
-        x=node_x, y=node_y,
-        mode='markers+text', # Hiển thị cả chấm và tên
-        text=node_labels,
-        textposition="bottom center",
-        hoverinfo='text',
-        hovertext=node_text,
-        marker=dict(
-            showscale=False, 
-            color=node_colors, 
-            size=node_sizes, 
-            line_width=2, 
-            line_color='white'
-        ),
-        textfont=dict(size=10, color='#333')
-    )
-
-    # 5. Tạo Mũi tên (Annotations) để chỉ hướng
-    annotations = []
-    for edge in G.edges(data=True):
-        x0, y0 = pos[edge[0]]
-        x1, y1 = pos[edge[1]]
-        color = edge[2]['color']
-        
-        # Tính toán điểm để mũi tên không bị node che khuất (lùi lại một chút từ đích)
-        # Vector chỉ hướng
-        dx = x1 - x0
-        dy = y1 - y0
-        length = math.sqrt(dx*dx + dy*dy)
-        if length == 0: length = 1
-        
-        # Khoảng cách lùi lại (tùy chỉnh theo size node đích)
-        # Giả sử node size ~ 0.05 đơn vị toạ độ
-        offset = 0.04 
-        new_x1 = x1 - (dx / length) * offset
-        new_y1 = y1 - (dy / length) * offset
-        
-        annotations.append(dict(
-            ax=x0, ay=y0, axref='x', ayref='y',
-            x=new_x1, y=new_y1, xref='x', yref='y',
-            showarrow=True,
-            arrowhead=2, # Kiểu mũi tên nhọn
-            arrowsize=1.5,
-            arrowwidth=1.5,
-            arrowcolor=color,
-            opacity=0.9
-        ))
-
-    # 6. Tạo Layout
-    fig = go.Figure(data=edge_traces + [node_trace],
-             layout=go.Layout(
-                title=dict(text=f"Mạng lưới tác động của {center_node_id}", font=dict(size=16)),
-                showlegend=False,
-                hovermode='closest',
-                margin=dict(b=20,l=5,r=5,t=40),
-                annotations=annotations, # Thêm mũi tên
-                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                height=700, 
-                plot_bgcolor='white'
-             ))
-    
-    # Legend giả (vẽ bằng HTML ở ngoài hoặc annotation, ở đây dùng annotation góc)
-    fig.add_annotation(text="🔴: Stock | 🔵: Article | 🟢: Entity<br>Lines: 🟢 Positive | 🔴 Negative", 
-                       align='left', showarrow=False, xref='paper', yref='paper', x=0, y=1, 
-                       bordercolor='black', borderwidth=1, bgcolor='white', opacity=0.8)
-
-    return fig
 
 def create_interactive_graph(data, center_node_id):
     if not data: return None
@@ -378,17 +283,14 @@ def create_interactive_graph(data, center_node_id):
     added_nodes = set()
 
     for item in data:
-        # --- Node Nguồn ---
         src_labels = item.get('src_labels', [])
         src_type = 'Stock' if 'Stock' in src_labels else ('Article' if 'Article' in src_labels else 'Entity')
         src_name = item.get('src_name', 'Unknown') 
         
-        # --- Node Đích ---
         tgt_labels = item.get('tgt_labels', [])
         tgt_type = 'Stock' if 'Stock' in tgt_labels else ('Article' if 'Article' in tgt_labels else 'Entity')
         tgt_name = item.get('tgt_name', 'Unknown')
 
-        # Thêm Node
         if src_name not in added_nodes:
             label_display = shorten_text(src_name, 20)
             net.add_node(src_name, label=label_display, title=f"Tên thực thể: {src_name} \nLoại thực thể: {src_type}", 
@@ -405,36 +307,28 @@ def create_interactive_graph(data, center_node_id):
                          size=30 if tgt_type == 'Stock' else (25 if tgt_type == 'Article' else 15))
             added_nodes.add(tgt_name)
 
-        # --- Thêm Cạnh (Xử lý Hover Description) ---
         impact = item.get('impact', 'RELATED')
-        
-        # Lấy description và xử lý nếu nó là list
         raw_desc = item.get('description', '')
         if isinstance(raw_desc, list):
             description = ", ".join(raw_desc)
         else:
             description = str(raw_desc)
             
-        # Tạo nội dung HTML cho Tooltip
-        # Khi hover vào dây, nó sẽ hiện ra cái bảng nhỏ này
         impact_vietsub = "TÍCH CỰC" if impact == 'POSITIVE' else ("TIÊU CỰC" if impact == 'NEGATIVE' else "LIÊN QUAN")
-        hover_content = f"""
-        Ảnh hưởng: {impact_vietsub}
-        Thông tin chi tiết: {description}
-        """
-        
+        hover_content = f"Ảnh hưởng: {impact_vietsub}\nThông tin chi tiết: {description}"
         edge_color = '#00CC00' if impact == 'POSITIVE' else ('#FF0000' if impact == 'NEGATIVE' else '#cccccc')
         
         net.add_edge(
             src_name, 
             tgt_name, 
-            title=hover_content,  # <--- THAY ĐỔI Ở ĐÂY (Nội dung hover)
+            title=hover_content,
             color=edge_color, 
             width=1.5,
             arrows='to'
         )
 
     return net
+
 # ==========================================
 # 4. KAFKA WORKER
 # ==========================================
@@ -518,9 +412,20 @@ def main():
     
     # Sidebar content
     st.sidebar.header("⚙️ Cấu hình")
-    st.sidebar.page_link("vietnam_stock_dashboard.py", label="Trang chủ Dashboard", icon="🏠")
-    st.sidebar.page_link("pages/history_view.py", label="Xem Lịch sử & Đánh giá", icon="📜")
-    st.sidebar.divider()
+    with st.sidebar:
+        st.subheader("Điều hướng")
+        st.page_link("vietnam_stock_dashboard.py", label="Trang chủ Dashboard", icon="🏠")
+        st.page_link("pages/history_view.py", label="Xem Lịch sử & Đánh giá", icon="📜")
+        st.divider()
+
+    # Ẩn menu mặc định nếu cần
+    st.markdown("""
+        <style>
+            [data-testid="stSidebarNav"] {
+                display: none !important;
+            }
+        </style>
+    """, unsafe_allow_html=True)
     
     stock_choice = st.sidebar.selectbox("📌 Mã cổ phiếu", list(VIETNAM_STOCKS.keys()))
     symbol = VIETNAM_STOCKS[stock_choice]
@@ -556,6 +461,10 @@ def main():
     history_df, data_source = get_stock_history_hybrid(symbol)
     kafka_info = st.session_state.kafka_data.get(symbol, {})
     ai_pred = get_ai_prediction(symbol)
+    
+    # [MỚI] Lấy dữ liệu Sentiment
+    sentiment_doc = get_sentiment_snapshot(symbol)
+    fg_score, fg_label, fg_date = calculate_fear_greed_index(sentiment_doc)
     news_list = get_news(symbol)
 
     if kafka_info:
@@ -597,6 +506,11 @@ def main():
     delta_class = "positive" if pct >= 0 else "negative"
     delta_sign = "+" if pct >= 0 else ""
     
+    # [MỚI] Xử lý màu sắc cho Sentiment Index
+    fg_color_class = "neutral"
+    if fg_score >= 60: fg_color_class = "positive" # Xanh
+    elif fg_score <= 40: fg_color_class = "negative" # Đỏ
+
     # Format volume
     vol_display = f"{vol/1e6:.1f}M" if vol >= 1e6 else f"{vol/1e3:.1f}K" if vol >= 1e3 else f"{vol:,.0f}"
     
@@ -604,13 +518,10 @@ def main():
     stock_full_name = stock_choice  # This includes both symbol and company name
 
     # --- FIXED HEADER (HTML) ---
-    # We render the Title and the first 3 metrics in HTML.
-    # The 4th metric (AI) will be injected via st.popover and positioned via CSS to sit next to them.
-    
-    # Get current time for header display
     current_time = datetime.now().strftime("%H:%M")
     current_date = datetime.now().strftime("%d/%m/%Y")
     
+    # Cập nhật Header với 5 ô
     header_html = f"""
     <div class="fixed-header">
         <div class="header-left">
@@ -634,6 +545,11 @@ def main():
                 <div class="metric-sub neutral">cổ phiếu</div>
             </div>
             <div class="metric-card">
+                <div class="metric-label">🧠 Tâm lý (F&G)</div>
+                <div class="metric-value" style="font-size: 1.5rem;">{fg_score}/100</div>
+                <div class="metric-sub {fg_color_class}">{fg_label}</div>
+            </div>
+            <div class="metric-card">
                 <div class="metric-label">⚡ RSI</div>
                 <div class="metric-value">{rsi}</div>
                 <div class="metric-sub neutral">14 ngày</div>
@@ -644,11 +560,9 @@ def main():
     st.markdown(header_html, unsafe_allow_html=True)
     
     # --- AI Popover Button ---
-    
     ai_btn_label = f"{t_text}"
     ai_confidence_str = f"Tự tin: {confidence}"
     
-    # Inject dynamic CSS for AI confidence text (only the dynamic part)
     st.markdown(f"""
     <style>
         /* Subtext (Bottom) - Dynamic content */
@@ -689,13 +603,11 @@ def main():
     t2, t3 = st.tabs(["📊 Thị trường & Tin tức", "🔗 Đồ thị"])
 
     with t2:
-        # Create 70-30 split: Chart on left, News feed on right
         col_chart, col_news = st.columns([7, 3])
         
         with col_chart:
             st.subheader("📉 Biểu đồ giá")
             if not history_df.empty:
-                # Update chart height to be taller
                 fig = create_chart(history_df, symbol)
                 fig.update_layout(height=800)
                 st.plotly_chart(fig, width="stretch")
@@ -705,20 +617,14 @@ def main():
         
         with col_news:
             st.subheader("📰 Tin tức")
-            
-            # Initialize news pagination in session state
             if f"news_count_{symbol}" not in st.session_state:
                 st.session_state[f"news_count_{symbol}"] = 30
             
-            # Fetch news with current limit
             news_list = get_news(symbol, limit=st.session_state[f"news_count_{symbol}"])
             
             if news_list:
-                
-                # Make news section scrollable with fixed height matching chart
                 with st.container(height=750):
                     for i, n in enumerate(news_list):
-                        # Format date
                         date_raw = n.get('date', '')
                         try:
                             if isinstance(date_raw, str):
@@ -733,19 +639,13 @@ def main():
                             date_formatted = str(date_raw)[:16] if date_raw else "N/A"
                         
                         title = n.get('title', 'Bản tin')
-                        
-                        # Create formatted label with title (2 lines max) and date
-                        # Truncate title for display in header
                         title_display = title[:100] + "..." if len(title) > 100 else title
                         expander_label = f"{title_display}\n\n📅 *{date_formatted}*"
                         
-                        # Use expander with custom styling
                         with st.expander(expander_label, expanded=False):
-                            # Show full content without truncation
                             if n.get('originalContent'): 
                                 st.text(n.get('originalContent'))
                     
-                    # Load more button at the end
                     st.divider()
                     if st.button("📥 Tải thêm tin tức", key=f"load_more_{symbol}", use_container_width=True):
                         st.session_state[f"news_count_{symbol}"] += 30
@@ -757,24 +657,17 @@ def main():
         rels = get_neo4j_data(symbol)
         if rels:
             st.caption("💡 Bạn có thể kéo thả các node, lăn chuột để zoom.")
-            
-            # Tạo graph
             net = create_interactive_graph(rels, symbol)
-            
             if net:
-                # Lưu vào file html tạm
                 path = "/tmp" if os.path.exists("/tmp") else "."
                 file_name = f"{path}/network_{symbol}.html"
                 net.save_graph(file_name)
                 
-                # Đọc file html và hiển thị bằng Streamlit Component
                 with open(file_name, 'r', encoding='utf-8') as f:
                     html_content = f.read()
                 
-                # Render HTML
                 components.html(html_content, height=610, scrolling=False)
                 
-                # Chú thích thủ công bên dưới (Vì PyVis legend hơi khó chỉnh)
                 st.markdown("""
                 <div style="text-align: center; margin-top: 10px;">
                     <span style='color:#FF4B4B; font-weight:bold'>★ Cổ phiếu</span> &nbsp;|&nbsp; 
@@ -788,7 +681,7 @@ def main():
         else: 
             st.warning("Không có dữ liệu đồ thị.")
 
-    # Auto-refresh removed to prevent constant reloading/fading
+    # Auto-refresh
     time.sleep(12)
     st.rerun()
 
